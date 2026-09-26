@@ -1,18 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 [package]
 name = "busbar-export-prometheus"
-version = "1.0.0"
-publish = false            # internal workspace crate; never goes to crates.io
+version = "1.5.0"
+publish = false
 edition = "2021"
 rust-version = "1.97"
-description = "the built-in PULL /metrics exporter (Metrics stream), packaged as busbar's kind:export sink logic. SCAFFOLD: skeleton pending byte-identical extraction from busbar-core."
+description = "The prometheus export sink: renders the host recorder's snapshot as the Prometheus text exposition the host serves at the well-known /metrics. Linked into the shipped binary, or dropped in as a signed tarball — one registration, one contract."
 license = "Apache-2.0"
 
+[lib]
+# rlib: THE LOGIC. The busbar composition root links it (its `linked::EXPORT` row and
+# `BUSBAR_COLD_ENTRY`), and the sibling `busbar-export-prometheus-plugin` cdylib re-exports it as the
+# dropped-in door. One source, both doors (DECISIONS #2 rule (1)).
+crate-type = ["rlib"]
+
 [dependencies]
-# INTERIM: busbar isn't public yet, so this is a local path dependency into a sibling checkout. Once
-# busbar ships publicly this becomes a git (pinned rev/tag) or crates.io dependency instead. The SDK
-# re-exports the export ABI wire types (ExportHandler / ExportStream / ExportField / Route), so the
-# sink logic names them without a direct busbar-plugin dependency.
-busbar-plugin-sdk = { path = "../../busbar/crates/plugin-sdk" }
-serde = "1"
+# The ONE busbar crate a plugin names (DECISIONS #84: a plugin's busbar closure is exactly
+# busbar-plugin-sdk, whose own busbar closure is busbar-contract + busbar-plugin — #40). Pinned by
+# git rev to the busbar commit in `.busbar-ref`; a busbar build that links this crate `[patch]`es the
+# busbar git source to its own tree, so ONE copy of the contract links.
+busbar-plugin-sdk = { git = "https://github.com/GetBusbar/busbar", rev = "c6cf2aa03f64972187ef2f6f85feef526561b8c7" }
+# The settings shape this sink validates (`buffer_seconds`, `key_gauge_limit`) is parsed with serde so
+# its refusals read exactly as the configuration's own settings errors always have.
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
