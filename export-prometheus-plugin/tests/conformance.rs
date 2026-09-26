@@ -39,9 +39,15 @@ const SETTINGS: &str = r#"{"buffer_seconds":60}"#;
 
 /// The recorder exposition the scrape renders: every family type the recorder writes — a HELP-less
 /// counter with escaped label values, a histogram, a gauge, a quantile summary — never empty, so the
-/// proof is not vacuous.
-const OWN: &str = "# TYPE busbar_requests_total counter\n\
-                   busbar_requests_total{pool=\"a\\\"b\\\\c\\nd\",outcome=\"ok\"} 3\n\
+/// proof is not vacuous. The families are in the sink's stable order (by name), so the bytes come
+/// back unchanged.
+const OWN: &str = "# TYPE busbar_conformance_gauge gauge\n\
+                   busbar_conformance_gauge 1.5\n\
+                   \n\
+                   # TYPE busbar_plane_request_duration_seconds summary\n\
+                   busbar_plane_request_duration_seconds{quantile=\"0.99\"} 0.0125\n\
+                   busbar_plane_request_duration_seconds_sum 1e-3\n\
+                   busbar_plane_request_duration_seconds_count 4\n\
                    \n\
                    # HELP busbar_request_duration_seconds request latency\n\
                    # TYPE busbar_request_duration_seconds histogram\n\
@@ -50,13 +56,8 @@ const OWN: &str = "# TYPE busbar_requests_total counter\n\
                    busbar_request_duration_seconds_sum 0.75\n\
                    busbar_request_duration_seconds_count 2\n\
                    \n\
-                   # TYPE busbar_conformance_gauge gauge\n\
-                   busbar_conformance_gauge 1.5\n\
-                   \n\
-                   # TYPE busbar_plane_request_duration_seconds summary\n\
-                   busbar_plane_request_duration_seconds{quantile=\"0.99\"} 0.0125\n\
-                   busbar_plane_request_duration_seconds_sum 1e-3\n\
-                   busbar_plane_request_duration_seconds_count 4\n\
+                   # TYPE busbar_requests_total counter\n\
+                   busbar_requests_total{pool=\"a\\\"b\\\\c\\nd\",outcome=\"ok\"} 3\n\
                    \n";
 
 /// This crate's built cdylib (uplifted or under `deps`, newest wins). A missing artifact is a

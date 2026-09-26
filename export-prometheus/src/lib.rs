@@ -18,7 +18,7 @@
 #![deny(unsafe_code)]
 
 use busbar_contract::abi::sdk::{
-    render_exposition, ExportHandler, ExportStream, MetricFamily, TEXT_EXPOSITION,
+    render_exposition, ExportHandler, ExportStream, MetricFamily, MetricSample, TEXT_EXPOSITION,
 };
 
 /// The row's canonical name.
@@ -76,10 +76,43 @@ impl ExportHandler for Prometheus {
     }
 
     /// The Prometheus text exposition of the snapshot: `# HELP`, `# TYPE`, the samples and the
-    /// family-closing blank line, every label value and number exactly as the recorder wrote it.
+    /// family-closing blank line, every label value and number exactly as the recorder wrote it —
+    /// in the STABLE order [`canonical_order`] gives it.
     fn render(&self, families: &[MetricFamily]) -> (String, String) {
-        (TEXT_EXPOSITION.to_string(), render_exposition(families))
+        (
+            TEXT_EXPOSITION.to_string(),
+            render_exposition(&canonical_order(families)),
+        )
     }
+}
+
+/// The snapshot in a STABLE order: families by name, and within a family its series by their
+/// labels. The recorder hands families and series over in its maps' hash order, which differs from
+/// boot to boot; the same metrics must scrape to the same bytes.
+///
+/// A SERIES is every sample sharing one label set once `le` / `quantile` are set aside — a
+/// histogram's `_bucket` lines with its `_sum` and `_count`, a summary's quantiles with its `_sum`
+/// and `_count`. A series is moved as a unit and its own lines keep the order the recorder wrote
+/// them in (buckets ascending, then `_sum`, then `_count`), so every output is one of the orders
+/// the recorder could already print.
+fn canonical_order(families: &[MetricFamily]) -> Vec<MetricFamily> {
+    let mut out = families.to_vec();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    for family in &mut out {
+        let mut series: std::collections::BTreeMap<Vec<(String, String)>, Vec<MetricSample>> =
+            std::collections::BTreeMap::new();
+        for sample in std::mem::take(&mut family.samples) {
+            let key = sample
+                .labels
+                .iter()
+                .filter(|(k, _)| k != "le" && k != "quantile")
+                .cloned()
+                .collect();
+            series.entry(key).or_default().push(sample);
+        }
+        family.samples = series.into_values().flatten().collect();
+    }
+    out
 }
 
 /// Open the sink. The settings are the host's to act on and were validated while the host
