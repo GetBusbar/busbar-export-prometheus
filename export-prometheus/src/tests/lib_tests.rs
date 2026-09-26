@@ -6,7 +6,7 @@
 //! is the composition root's (`root::linked::tests`), where the linked tables live.
 
 use super::*;
-use busbar_plugin_sdk::MetricSample;
+use busbar_contract::abi::sdk::MetricSample;
 
 fn sink() -> Box<dyn ExportHandler> {
     open("{}").expect("the sink opens")

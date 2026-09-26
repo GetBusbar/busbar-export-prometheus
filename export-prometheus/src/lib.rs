@@ -17,7 +17,7 @@
 
 #![deny(unsafe_code)]
 
-use busbar_plugin_sdk::{
+use busbar_contract::abi::sdk::{
     render_exposition, ExportHandler, ExportStream, MetricFamily, TEXT_EXPOSITION,
 };
 
@@ -88,13 +88,13 @@ pub fn open(_cfg: &str) -> Result<Box<dyn ExportHandler>, String> {
     Ok(Box::new(Prometheus))
 }
 
-busbar_plugin_sdk::export_export_plugin!(open);
+busbar_contract::abi::sdk::export_export_plugin!(open);
 
 /// THE LINKED DOOR's entry — what the composition root's linked tables name for this crate.
 pub mod linked {
     /// `(name, alias, declares, boundary)` — the row's statement and the boundary the one cold load
     /// runs over, exactly what the dropped-in tarball states and exports.
-    pub const EXPORT: (&str, &str, &str, &busbar_plugin_sdk::ColdEntry) = (
+    pub const EXPORT: (&str, &str, &str, &busbar_contract::abi::sdk::ColdEntry) = (
         super::NAME,
         super::ALIAS,
         super::DECLARES,
