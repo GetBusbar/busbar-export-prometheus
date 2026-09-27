@@ -119,7 +119,13 @@ fn the_linked_entry_states_the_row_and_this_crates_boundary() {
     let (name, alias, declares, entry) = linked::EXPORT;
     assert_eq!(
         (name, alias, declares),
-        ("busbar-export-prometheus", "prometheus", "{}")
+        ("busbar-export-prometheus", "prometheus", DECLARES)
+    );
+    let stated: serde_json::Value = serde_json::from_str(declares).expect("declares.json parses");
+    assert_eq!(
+        stated,
+        serde_json::json!({"contract_abi": {"min": 3, "max": 3}}),
+        "the sink declares its contract-ABI range and nothing else"
     );
     assert!(std::ptr::eq(entry, &BUSBAR_COLD_ENTRY));
 }
