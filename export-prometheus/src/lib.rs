@@ -88,18 +88,41 @@ impl ExportHandler for Prometheus {
     }
 }
 
-/// The snapshot in a STABLE order: families by name, and within a family its series by their
-/// labels. The recorder hands families and series over in its maps' hash order, which differs from
-/// boot to boot; the same metrics must scrape to the same bytes.
+/// The snapshot in a STABLE order: families grouped by KIND — every counter, then every gauge,
+/// then every histogram/summary (a distribution) — and by name within a kind's group; and within a
+/// family its series by their labels. The recorder hands families and series over in its maps' hash
+/// order, which differs from boot to boot; the same metrics must scrape to the same bytes.
+///
+/// THE KIND GROUPING is not this sink's invention: it is v1.5.5's own wire behaviour, forced by the
+/// `metrics-exporter-prometheus` renderer both v1.5.5 and this host still link — `render_to_write`
+/// drains its counters map whole, then its gauges map whole, then its distributions (histogram +
+/// summary) map whole, three separate passes in that fixed order, every release. A v1.5.5 capture's
+/// FAMILY ORDER WITHIN a kind is not code-determined (hash-map order, "varies between runs" — a
+/// prior capture cannot pin it), but WHICH KIND'S BLOCK COMES FIRST is code-determined and never
+/// varies. Sorting by name within a kind is a legitimate, deterministic pick from among the orders
+/// v1.5.5's own hash-random renderer could already have produced.
 ///
 /// A SERIES is every sample sharing one label set once `le` / `quantile` are set aside — a
 /// histogram's `_bucket` lines with its `_sum` and `_count`, a summary's quantiles with its `_sum`
 /// and `_count`. A series is moved as a unit and its own lines keep the order the recorder wrote
 /// them in (buckets ascending, then `_sum`, then `_count`), so every output is one of the orders
 /// the recorder could already print.
+fn kind_rank(kind: &str) -> u8 {
+    match kind {
+        "counter" => 0,
+        "gauge" => 1,
+        "histogram" | "summary" => 2,
+        _ => 3, // "untyped" or anything else the wire never actually carries
+    }
+}
+
 fn canonical_order(families: &[MetricFamily]) -> Vec<MetricFamily> {
     let mut out = families.to_vec();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.sort_by(|a, b| {
+        kind_rank(&a.kind)
+            .cmp(&kind_rank(&b.kind))
+            .then_with(|| a.name.cmp(&b.name))
+    });
     for family in &mut out {
         let mut series: std::collections::BTreeMap<Vec<(String, String)>, Vec<MetricSample>> =
             std::collections::BTreeMap::new();

@@ -95,16 +95,20 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
     ];
     let (content_type, body) = sink().render(&families);
     assert_eq!(content_type, "text/plain; version=0.0.4");
+    // The counter renders BEFORE the summary even though the snapshot handed it over after —
+    // v1.5.5's own renderer always drains its counters map whole before its distributions map,
+    // and this sink's stable order groups by kind first (counter, gauge, histogram/summary) so
+    // it never lands a counter after a summary the way an un-grouped name sort would (KP-C0).
     assert_eq!(
         body,
-        "# TYPE busbar_request_duration_seconds summary\n\
+        "# HELP busbar_requests_total requests served\n\
+         # TYPE busbar_requests_total counter\n\
+         busbar_requests_total{pool=\"a\\\"b\",outcome=\"ok\"} 3\n\
+         \n\
+         # TYPE busbar_request_duration_seconds summary\n\
          busbar_request_duration_seconds{quantile=\"0.5\"} 0.0125\n\
          busbar_request_duration_seconds_sum 0.05\n\
          busbar_request_duration_seconds_count 4\n\
-         \n\
-         # HELP busbar_requests_total requests served\n\
-         # TYPE busbar_requests_total counter\n\
-         busbar_requests_total{pool=\"a\\\"b\",outcome=\"ok\"} 3\n\
          \n"
     );
     assert_eq!(
@@ -210,6 +214,15 @@ fn snapshot_under(seed: u64) -> Vec<MetricFamily> {
         );
     }
     families.insert(hist.to_string(), series.into_values().collect());
+    // A counter whose NAME sorts after the histogram's ("z" > "l"): under a plain name sort it
+    // would land after `busbar_latency_seconds`, but v1.5.5's own renderer drains its whole
+    // counters map before its distributions map, so this must still render before the histogram
+    // (KP-C0: kind beats name).
+    let zulu = "busbar_zulu_total";
+    families.insert(
+        zulu.to_string(),
+        vec![vec![sample(zulu, &[("pool", "alpha")], "1")]],
+    );
     families
         .into_iter()
         .map(|(name, series)| MetricFamily {
@@ -238,16 +251,32 @@ fn the_same_snapshot_under_two_hash_seeds_renders_identical_bytes() {
         "the rendered exposition depends on the recorder's hash order"
     );
 
-    // Families by name, series by labels, and each series whole in the recorder's own order.
+    // Families by KIND then name (every counter, including `busbar_zulu_total`, before the one
+    // histogram), series by labels, and each series whole in the recorder's own order. A plain
+    // name sort would put `busbar_zulu_total` (a counter) after `busbar_latency_seconds` (the
+    // histogram); kind grouping — v1.5.5's own renderer drains counters whole before
+    // distributions — must not.
     let lines: Vec<&str> = a.lines().filter(|l| l.starts_with("# TYPE ")).collect();
-    let mut sorted = lines.clone();
-    sorted.sort();
-    assert_eq!(lines, sorted, "families are not in name order");
+    let mut expected: Vec<String> = (0..12)
+        .map(|n| format!("# TYPE busbar_family_{n:02}_total counter"))
+        .collect();
+    expected.push("# TYPE busbar_zulu_total counter".to_string());
+    expected.sort();
+    expected.push("# TYPE busbar_latency_seconds histogram".to_string());
+    let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
+    assert_eq!(lines, expected, "families are not kind-then-name ordered");
     assert!(a.starts_with(
         "# TYPE busbar_family_00_total counter\n\
          busbar_family_00_total{pool=\"alpha\"} 1\n\
          busbar_family_00_total{pool=\"bravo\"} 1\n"
     ));
+    assert!(a.contains("# TYPE busbar_zulu_total counter\nbusbar_zulu_total{pool=\"alpha\"} 1\n"));
+    let zulu_pos = a.find("# TYPE busbar_zulu_total").unwrap();
+    let hist_pos = a.find("# TYPE busbar_latency_seconds").unwrap();
+    assert!(
+        zulu_pos < hist_pos,
+        "a counter must render before the histogram even though its name sorts after it"
+    );
     assert!(a.contains(
         "# TYPE busbar_latency_seconds histogram\n\
          busbar_latency_seconds_bucket{pool=\"alpha\",le=\"0.5\"} 1\n\
