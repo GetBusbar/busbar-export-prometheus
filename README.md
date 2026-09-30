@@ -9,3 +9,27 @@ First-party signed kind:export plugin cdylib: the prometheus export sink (module
 
 [![ci](https://github.com/GetBusbar/busbar-export-prometheus/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/GetBusbar/busbar-export-prometheus/actions/workflows/ci.yml)
 <!-- fleet:header:end -->
+
+## What it is for
+
+`busbar-export-prometheus` is a `kind: export` busbar plugin.
+
+## Config
+
+Configured under the `prometheus` module name.
+
+## Build
+
+```bash
+cargo build --release -p busbar-export-prometheus-plugin
+```
+
+## Tests
+
+```bash
+cargo test --workspace --locked
+```
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
