@@ -288,3 +288,42 @@ fn the_same_snapshot_under_two_hash_seeds_renders_identical_bytes() {
     ));
     assert_eq!(a.lines().count(), render_exposition(&one).lines().count());
 }
+
+/// A gauge renders after every counter and before every histogram, whatever the names sort to
+/// (v1.5.5 drains counters, then gauges, then distributions). Fed in reverse order, with a gauge
+/// whose name sorts after the histogram's, so a rank that moved the gauge would show.
+#[test]
+fn a_gauge_renders_between_the_counters_and_the_histograms_whatever_its_name() {
+    let fam = |name: &str, kind: &str, sample_name: &str, le: Option<&str>| MetricFamily {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        help: None,
+        samples: vec![MetricSample {
+            name: sample_name.to_string(),
+            labels: le
+                .map(|v| vec![("le".to_string(), v.to_string())])
+                .unwrap_or_default(),
+            value: "1".to_string(),
+        }],
+    };
+    let families = vec![
+        fam(
+            "busbar_aa_seconds",
+            "histogram",
+            "busbar_aa_seconds_bucket",
+            Some("+Inf"),
+        ),
+        fam("busbar_zz_gauge", "gauge", "busbar_zz_gauge", None),
+        fam("busbar_m_total", "counter", "busbar_m_total", None),
+    ];
+    let out = sink().render(&families).1;
+    let types: Vec<&str> = out.lines().filter(|l| l.starts_with("# TYPE ")).collect();
+    assert_eq!(
+        types,
+        [
+            "# TYPE busbar_m_total counter",
+            "# TYPE busbar_zz_gauge gauge",
+            "# TYPE busbar_aa_seconds histogram",
+        ]
+    );
+}
