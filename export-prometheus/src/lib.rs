@@ -17,9 +17,38 @@
 
 #![deny(unsafe_code)]
 
-use busbar_contract::abi::sdk::{
-    render_exposition, ExportHandler, ExportStream, MetricFamily, MetricSample, TEXT_EXPOSITION,
-};
+use busbar_contract::abi::sdk::{ExportHandler, ExportStream, MetricFamily, MetricSample};
+
+/// The Prometheus text exposition's content type.
+pub const TEXT_EXPOSITION: &str = "text/plain; version=0.0.4";
+
+/// Render the host recorder's snapshot (export ABI minor 6) in the Prometheus TEXT exposition
+/// format, family by family: `# HELP` (when present), `# TYPE`, the samples, a blank line. Every
+/// label value and number is written as the snapshot carries it, so rendering a snapshot of the
+/// host's own exposition reproduces it byte for byte.
+fn render_exposition(families: &[MetricFamily]) -> String {
+    let mut out = String::new();
+    for f in families {
+        if let Some(help) = &f.help {
+            out.push_str(&format!("# HELP {} {help}\n", f.name));
+        }
+        out.push_str(&format!("# TYPE {} {}\n", f.name, f.kind));
+        for s in &f.samples {
+            out.push_str(&s.name);
+            if !s.labels.is_empty() {
+                let labels: Vec<String> = s
+                    .labels
+                    .iter()
+                    .map(|(k, v)| format!("{k}=\"{v}\""))
+                    .collect();
+                out.push_str(&format!("{{{}}}", labels.join(",")));
+            }
+            out.push_str(&format!(" {}\n", s.value));
+        }
+        out.push('\n');
+    }
+    out
+}
 
 /// The row's canonical name.
 pub const NAME: &str = "busbar-export-prometheus";

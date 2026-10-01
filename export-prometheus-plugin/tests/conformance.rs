@@ -225,7 +225,7 @@ fn the_linked_and_the_dropped_in_prometheus_sink_are_one_sink() {
             ["export.m.settings: invalid type: string \"sixty\", expected u64"],
         ])
     );
-    let content_type = busbar_contract::abi::sdk::TEXT_EXPOSITION;
+    let content_type = busbar_export_prometheus::TEXT_EXPOSITION;
     assert_eq!(
         linked["rendered"],
         serde_json::json!([content_type, OWN]),
