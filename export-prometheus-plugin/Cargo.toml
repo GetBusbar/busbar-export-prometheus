@@ -17,11 +17,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # THE LOGIC, same repo: its `door::door` is the door this image exports.
 busbar-export-prometheus = { path = "../export-prometheus" }
-busbar-contract = { git = "https://github.com/GetBusbar/busbar", rev = "934a016e20fc1a67c209b671d137c8cc28092767" }
+busbar-contract = { workspace = true }
 
 [dev-dependencies]
 # The conformance test loads the built cdylib and the linked door over the REAL loader and drives
 # both through the one dispatcher — dev-only, never in the shipped artifact. Same pinned rev as the
 # logic crate's busbar-contract, so one busbar source resolves.
-busbar-plugin-loader = { git = "https://github.com/GetBusbar/busbar", rev = "934a016e20fc1a67c209b671d137c8cc28092767" }
-serde_json = "1"
+busbar-plugin-loader = { workspace = true }
+serde_json = { workspace = true }
