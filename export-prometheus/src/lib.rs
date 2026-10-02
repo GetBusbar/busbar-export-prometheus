@@ -3,24 +3,22 @@
 
 //! THE PROMETHEUS EXPORT SINK — `export.<name>.module: prometheus`.
 //!
-//! A PULL sink over the COLD export ABI. The host keeps what only the host can own: the recorder
-//! every emit site writes, its scrape-time gauges, and the well-known `/metrics` route it serves.
-//! This sink owns what an exposition IS: it carries the `metrics` stream (the instance subscribed
-//! to it is the one the host's scrape asks to render), it validates the settings an operator writes
-//! for it, and on every scrape the host hands it the recorder's snapshot (`ExportRequest::Scrape`,
-//! export ABI minor 6) and serves the text it renders back.
+//! A PULL sink on the export kind's memory ABI. The host keeps what only the host can own: the
+//! recorder every emit site writes, its scrape-time gauges, the well-known `/metrics` route it
+//! serves and that route's content type. This sink owns what an exposition IS: it carries the
+//! `metrics` stream (the instance subscribed to it is the one the host's scrape asks to render), it
+//! validates the settings an operator writes for it, and on every scrape the host hands it the
+//! recorder's WHOLE snapshot (`ScrapeIn::families`, in the recorder's order) and it renders the
+//! text into the host's buffer.
 //!
-//! One crate, two doors (DECISIONS #2 rule (1)): the `rlib` is linked into the shipped binary
-//! through the composition root's linked tables ([`linked::EXPORT`]), the `cdylib` can be packed
-//! into a signed tarball and dropped into `plugins/`. Both are registered by the one admission and
-//! loaded by the one load over [`BUSBAR_COLD_ENTRY`] or the library's symbols — the same functions.
+//! One door, both ways in: [`door::door`] is the row a busbar build links, and the sibling
+//! `busbar-export-prometheus-plugin` cdylib exports the same door as its one symbol.
 
 #![deny(unsafe_code)]
 
-use busbar_contract::abi::sdk::{ExportHandler, ExportStream, MetricFamily, MetricSample};
+pub mod door;
 
-/// The Prometheus text exposition's content type.
-pub const TEXT_EXPOSITION: &str = "text/plain; version=0.0.4";
+use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
 
 /// Render the host recorder's snapshot (export ABI minor 6) in the Prometheus TEXT exposition
 /// format, family by family: `# HELP` (when present), `# TYPE`, the samples, a blank line. Every
@@ -85,36 +83,27 @@ const ZERO_RETENTION: &str =
      the recording cost. Name a positive retention window in seconds, or remove the instance to \
      turn metrics off";
 
-/// The sink. It holds nothing: every scrape carries the whole snapshot it renders.
-struct Prometheus;
-
-impl ExportHandler for Prometheus {
-    /// `metrics` — the one stream the host PULLS rather than pushes.
-    fn streams(&self) -> Vec<ExportStream> {
-        vec![ExportStream::Metrics]
+/// The settings refusal, as one complete line: a malformed bag is `settings: <serde's words>`; a
+/// zero retention window asks the recorder to keep nothing while still paying to record it, which
+/// is refused rather than served inert (omitting the instance is how collection is turned off).
+///
+/// # Errors
+/// The line, when the settings are refused.
+pub fn validate(settings: &[u8]) -> Result<(), String> {
+    let parsed = serde_json::from_slice(settings)
+        .and_then(serde_json::from_value::<PrometheusSettings>)
+        .map_err(|e| format!("settings: {e}"))?;
+    if parsed.buffer_seconds == 0 {
+        return Err(ZERO_RETENTION.to_string());
     }
+    Ok(())
+}
 
-    /// The settings refusal, as one complete line in the configuration's own words: a malformed
-    /// bag is `export.<instance>.settings: <why>`; a zero retention window asks the recorder to keep
-    /// nothing while still paying to record it, which is refused rather than served inert (omitting
-    /// the instance is how collection is turned off).
-    fn validate(&self, instance: &str, settings: &serde_json::Value) -> Vec<String> {
-        match serde_json::from_value::<PrometheusSettings>(settings.clone()) {
-            Err(e) => vec![format!("export.{instance}.settings: {e}")],
-            Ok(s) if s.buffer_seconds == 0 => vec![ZERO_RETENTION.to_string()],
-            Ok(_) => Vec::new(),
-        }
-    }
-
-    /// The Prometheus text exposition of the snapshot: `# HELP`, `# TYPE`, the samples and the
-    /// family-closing blank line, every label value and number exactly as the recorder wrote it —
-    /// in the STABLE order [`canonical_order`] gives it.
-    fn render(&self, families: &[MetricFamily]) -> (String, String) {
-        (
-            TEXT_EXPOSITION.to_string(),
-            render_exposition(&canonical_order(families)),
-        )
-    }
+/// The Prometheus text exposition of the snapshot: `# HELP`, `# TYPE`, the samples and the
+/// family-closing blank line, every label value and number exactly as the recorder wrote it — in
+/// the STABLE order [`canonical_order`] gives it.
+pub fn render(families: &[MetricFamily]) -> String {
+    render_exposition(&canonical_order(families))
 }
 
 /// The snapshot in a STABLE order: families grouped by KIND — every counter, then every gauge,
@@ -167,26 +156,6 @@ fn canonical_order(families: &[MetricFamily]) -> Vec<MetricFamily> {
         family.samples = series.into_values().flatten().collect();
     }
     out
-}
-
-/// Open the sink. The settings are the host's to act on and were validated while the host
-/// validated its configuration, so the open reads none of them and cannot fail on them.
-pub fn open(_cfg: &str) -> Result<Box<dyn ExportHandler>, String> {
-    Ok(Box::new(Prometheus))
-}
-
-busbar_contract::abi::sdk::export_export_plugin!(open);
-
-/// THE LINKED DOOR's entry — what the composition root's linked tables name for this crate.
-pub mod linked {
-    /// `(name, alias, declares, boundary)` — the row's statement and the boundary the one cold load
-    /// runs over, exactly what the dropped-in tarball states and exports.
-    pub const EXPORT: (&str, &str, &str, &busbar_contract::abi::sdk::ColdEntry) = (
-        super::NAME,
-        super::ALIAS,
-        super::DECLARES,
-        &super::BUSBAR_COLD_ENTRY,
-    );
 }
 
 #[cfg(test)]

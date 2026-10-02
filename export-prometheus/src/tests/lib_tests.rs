@@ -3,38 +3,31 @@
 
 //! The sink's own statements: what it carries, where it serves, how it refuses settings, and that
 //! it renders a snapshot back into the exposition it was taken from. The linked-vs-dropped-in proof
-//! is the composition root's (`root::linked::tests`), where the linked tables live.
+//! is `busbar-export-prometheus-plugin`'s conformance test.
 
 use super::*;
 use busbar_contract::abi::sdk::MetricSample;
 
-fn sink() -> Box<dyn ExportHandler> {
-    open("{}").expect("the sink opens")
-}
-
-#[test]
-fn it_carries_the_metrics_stream_and_declares_no_route_of_its_own() {
-    let sink = sink();
-    assert_eq!(sink.streams(), vec![ExportStream::Metrics]);
-    assert!(sink.routes().is_empty(), "the host serves /metrics");
-}
-
 /// The refusals read as the configuration's own settings errors always have — one line each,
-/// `export.<instance>.settings: <serde's words>`.
+/// `settings: <serde's words>` (the host names the instance).
 #[test]
 fn its_settings_refusals_are_the_configurations_words() {
-    let sink = sink();
-    let check = |v: serde_json::Value| sink.validate("m", &v);
+    let check = |v: serde_json::Value| {
+        validate(v.to_string().as_bytes())
+            .err()
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
     assert!(check(serde_json::json!({ "buffer_seconds": 60 })).is_empty());
     assert!(check(serde_json::json!({ "buffer_seconds": 60, "key_gauge_limit": 5 })).is_empty());
     assert_eq!(
         check(serde_json::json!({})),
-        vec!["export.m.settings: missing field `buffer_seconds`".to_string()]
+        vec!["settings: missing field `buffer_seconds`".to_string()]
     );
     assert_eq!(
         check(serde_json::json!({ "buffer_seconds": 60, "buffer": 1 })),
         vec![
-            "export.m.settings: unknown field `buffer`, expected `buffer_seconds` or \
+            "settings: unknown field `buffer`, expected `buffer_seconds` or \
              `key_gauge_limit`"
                 .to_string()
         ]
@@ -51,7 +44,7 @@ fn its_settings_refusals_are_the_configurations_words() {
     );
     assert_eq!(
         check(serde_json::json!({ "buffer_seconds": "60" })),
-        vec!["export.m.settings: invalid type: string \"60\", expected u64".to_string()]
+        vec!["settings: invalid type: string \"60\", expected u64".to_string()]
     );
 }
 
@@ -93,8 +86,7 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
             )],
         },
     ];
-    let (content_type, body) = sink().render(&families);
-    assert_eq!(content_type, "text/plain; version=0.0.4");
+    let body = render(&families);
     // The counter renders BEFORE the summary even though the snapshot handed it over after —
     // v1.5.5's own renderer always drains its counters map whole before its distributions map,
     // and this sink's stable order groups by kind first (counter, gauge, histogram/summary) so
@@ -111,27 +103,18 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
          busbar_request_duration_seconds_count 4\n\
          \n"
     );
-    assert_eq!(
-        sink().render(&[]).1,
-        "",
-        "an empty recorder renders nothing"
-    );
+    assert_eq!(render(&[]), "", "an empty recorder renders nothing");
 }
 
+/// The sink declares its contract-ABI range and nothing else.
 #[test]
-fn the_linked_entry_states_the_row_and_this_crates_boundary() {
-    let (name, alias, declares, entry) = linked::EXPORT;
-    assert_eq!(
-        (name, alias, declares),
-        ("busbar-export-prometheus", "prometheus", DECLARES)
-    );
-    let stated: serde_json::Value = serde_json::from_str(declares).expect("declares.json parses");
+fn it_declares_its_contract_abi_range_and_nothing_else() {
+    let stated: serde_json::Value = serde_json::from_str(DECLARES).expect("declares.json parses");
     assert_eq!(
         stated,
-        serde_json::json!({"contract_abi": {"min": 3, "max": 3}}),
-        "the sink declares its contract-ABI range and nothing else"
+        serde_json::json!({"contract_abi": {"min": 3, "max": 3}})
     );
-    assert!(std::ptr::eq(entry, &BUSBAR_COLD_ENTRY));
+    assert_eq!((NAME, ALIAS), ("busbar-export-prometheus", "prometheus"));
 }
 
 /// A `BuildHasher` whose seed is the test's to choose, so "a different hash seed" is a fact of the
@@ -245,7 +228,7 @@ fn the_same_snapshot_under_two_hash_seeds_renders_identical_bytes() {
         render_exposition(&two),
         "RED arm: the two seeds must hand the snapshot over in different orders"
     );
-    let (a, b) = (sink().render(&one).1, sink().render(&two).1);
+    let (a, b) = (render(&one), render(&two));
     assert_eq!(
         a, b,
         "the rendered exposition depends on the recorder's hash order"
@@ -316,7 +299,7 @@ fn a_gauge_renders_between_the_counters_and_the_histograms_whatever_its_name() {
         fam("busbar_zz_gauge", "gauge", "busbar_zz_gauge", None),
         fam("busbar_m_total", "counter", "busbar_m_total", None),
     ];
-    let out = sink().render(&families).1;
+    let out = render(&families);
     let types: Vec<&str> = out.lines().filter(|l| l.starts_with("# TYPE ")).collect();
     assert_eq!(
         types,
