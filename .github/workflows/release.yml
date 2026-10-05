@@ -25,7 +25,7 @@ jobs:
     secrets: inherit
   release:
     needs: ci
-    uses: GetBusbar/busbar/.github/workflows/plugin-release.yml@18029a9e87c9afd7aa18b7563f3635c43318dcbc
+    uses: GetBusbar/busbar/.github/workflows/plugin-release.yml@64202075f02faa0392a418415c2a0bbac5ef2a44
     with:
       plugin_crate: busbar-export-prometheus-plugin
       manifest_name: busbar-export-prometheus
@@ -41,7 +41,7 @@ jobs:
   consumer-verify:
     needs: release
     if: ${{ !cancelled() }}
-    uses: GetBusbar/busbar/.github/workflows/plugin-consumer-verify.yml@18029a9e87c9afd7aa18b7563f3635c43318dcbc
+    uses: GetBusbar/busbar/.github/workflows/plugin-consumer-verify.yml@64202075f02faa0392a418415c2a0bbac5ef2a44
     with:
       version: ${{ github.ref_name }}
       asset_prefix: busbar-export-prometheus
