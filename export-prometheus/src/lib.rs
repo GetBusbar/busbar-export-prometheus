@@ -78,6 +78,24 @@ pub fn render_hooks(families: &[MetricFamily]) -> String {
     out
 }
 
+/// THE LIMITS CHECK across every configured instance of this sink, in configuration order: the sink
+/// states the `one_instance` mark, so a second instance is refused in 1.5.5's words, once per extra
+/// instance, naming the first.
+pub fn check_limits(instances: &[String]) -> Vec<String> {
+    let Some((first, rest)) = instances.split_first() else {
+        return Vec::new();
+    };
+    rest.iter()
+        .map(|name| {
+            format!(
+                "export.{name}: a second `module: {ALIAS}` instance (already defined as '{first}'). \
+                 Prometheus serves the ONE well-known /metrics route, so a second instance could \
+                 only be silently ignored — keep a single instance."
+            )
+        })
+        .collect()
+}
+
 /// The row's canonical name.
 pub const NAME: &str = "busbar-export-prometheus";
 

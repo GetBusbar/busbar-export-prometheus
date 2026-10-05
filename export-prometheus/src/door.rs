@@ -12,7 +12,9 @@
 //!   `SCRAPE_FLAG_HOOK_FAMILIES` on the head the families are the host's hook families and render
 //!   as 1.5.5's `/metrics/hooks` ([`crate::render_hooks`]).
 //! * `deliver` — READY, nothing kept: the host pulls `metrics`, it never pushes them.
-//! * `status` and `check` — READY with nothing to report. `serve` — REFUSED: no route of its own
+//! * `status` — READY with nothing to report. `check` — at the limits phase, 1.5.5's refusal of
+//!   every instance after the first ([`crate::check_limits`]): the sink states the `one_instance`
+//!   mark, so the host asks it while the configuration is resolved; READY with nothing otherwise. `serve` — REFUSED: no route of its own
 //!   (the host serves `/metrics`).
 //!
 //! The one `unsafe` here is [`lent`]: the export kind's `ScrapeIn` lends its families and its
@@ -20,10 +22,10 @@
 
 use busbar_contract::abi::export::{
     cancel, CheckIn, CheckOut, DeliverIn, ExportStream, ScrapeIn, ScrapeOut, ServeIn, ServeOut,
-    StatusOut, Tail, SCRAPE_FLAG_HOOK_FAMILIES,
+    StatusOut, Tail, CHECK_PHASE_LIMITS, SCRAPE_FLAG_HOOK_FAMILIES,
 };
-use busbar_contract::abi::mechanism::call::{InHead, OutHead, Outcome};
-use busbar_contract::abi::mechanism::door::{KindTailHead, Statement};
+use busbar_contract::abi::mechanism::call::{InHead, OutHead, Outcome, BLOB_JSON};
+use busbar_contract::abi::mechanism::door::{KindTailHead, Statement, MARK_ONE_INSTANCE};
 use busbar_contract::abi::sdk::door::statement;
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
 use busbar_contract::abi::sdk::{Instance, Lent, Out, Safe, SafeSlot};
@@ -47,6 +49,8 @@ const TAIL: Tail = Tail {
 /// This plugin's Statement: its name and version and the `metrics` stream.
 pub const STATEMENT: Statement = Statement {
     kind_tail: (&TAIL as *const Tail).cast::<KindTailHead>(),
+    // One scrape sink renders the ONE well-known `/metrics`: at most one instance.
+    marks: MARK_ONE_INSTANCE,
     ..statement(NAME, env!("CARGO_PKG_VERSION"), 64)
 };
 
@@ -74,8 +78,8 @@ impl Life for Prometheus {
 #[allow(unsafe_code)]
 mod lent {
     use busbar_contract::abi::export::{
-        ScrapeFamily, ScrapeIn, ScrapeLabel, ScrapeSample, SCRAPE_KIND_COUNTER, SCRAPE_KIND_GAUGE,
-        SCRAPE_KIND_HISTOGRAM, SCRAPE_KIND_SUMMARY,
+        CheckIn, ScrapeFamily, ScrapeIn, ScrapeLabel, ScrapeSample, SCRAPE_KIND_COUNTER,
+        SCRAPE_KIND_GAUGE, SCRAPE_KIND_HISTOGRAM, SCRAPE_KIND_SUMMARY,
     };
     use busbar_contract::abi::mechanism::call::AbiStr;
     use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
@@ -149,6 +153,16 @@ mod lent {
                         .collect(),
                 }
             })
+            .collect()
+    }
+
+    /// `check`'s instance names, in configuration order.
+    pub(super) fn instance_names(input: &CheckIn) -> Vec<String> {
+        // SAFETY (both reads): the export kind's ABI lends `instances` and every string they name
+        // for the call.
+        let list = unsafe { list(input.instances, input.instances_len) };
+        list.iter()
+            .map(|c| unsafe { text(c.name) }.unwrap_or_default())
             .collect()
     }
 
@@ -235,10 +249,21 @@ impl SafeSlot for Check {
     type Out = CheckOut;
     type State = Held<Prometheus>;
     fn call(
-        _: Instance<'_, Held<Prometheus>>,
-        _: Lent<'_, CheckIn>,
-        _: Out<'_, CheckOut>,
+        instance: Instance<'_, Held<Prometheus>>,
+        input: Lent<'_, CheckIn>,
+        mut out: Out<'_, CheckOut>,
     ) -> Outcome {
+        let Some(h) = instance.get() else {
+            return Outcome::Refused;
+        };
+        if input.get().phase != CHECK_PHASE_LIMITS {
+            return Outcome::Ready;
+        }
+        let lines = crate::check_limits(&lent::instance_names(input.get()));
+        if !lines.is_empty() {
+            let json = serde_json::to_vec(&lines).unwrap_or_default();
+            out.lease(|o| &o.findings, h.leases(), json, BLOB_JSON);
+        }
         Outcome::Ready
     }
 }
