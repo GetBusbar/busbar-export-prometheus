@@ -327,7 +327,9 @@ fn transcript(dropped: bool) -> Value {
 
 /// The recorder snapshot of `exposition`, as the host's snapshot reader takes it.
 fn to_contract(exposition: &str) -> Vec<MetricFamily> {
-    busbar_plugin_loader::scrape::snapshot(exposition).expect("the exposition snapshots")
+    let families = busbar_contract::export_calls::parse_families(exposition)
+        .expect("the exposition snapshots");
+    busbar_plugin_loader::scrape::cold_families(&families)
 }
 
 /// The prometheus sink is ONE plugin through either door, and the bytes it renders are the
