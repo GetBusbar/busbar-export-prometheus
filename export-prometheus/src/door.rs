@@ -8,7 +8,9 @@
 //! * `validate` — [`crate::validate`]: the configuration's words, the zero-retention refusal included.
 //! * `open` / `refresh` — nothing to hold: every scrape carries the whole snapshot it renders.
 //! * `scrape` — the snapshot rendered ([`crate::render`]) into the host's buffer; a buffer too
-//!   small is FAILED with the bytes `needed`, nothing written, and the host calls again once.
+//!   small is FAILED with the bytes `needed`, nothing written, and the host calls again once. With
+//!   `SCRAPE_FLAG_HOOK_FAMILIES` on the head the families are the host's hook families and render
+//!   as 1.5.5's `/metrics/hooks` ([`crate::render_hooks`]).
 //! * `deliver` — READY, nothing kept: the host pulls `metrics`, it never pushes them.
 //! * `status` and `check` — READY with nothing to report. `serve` — REFUSED: no route of its own
 //!   (the host serves `/metrics`).
@@ -18,7 +20,7 @@
 
 use busbar_contract::abi::export::{
     cancel, CheckIn, CheckOut, DeliverIn, ExportStream, ScrapeIn, ScrapeOut, ServeIn, ServeOut,
-    StatusOut, Tail,
+    StatusOut, Tail, SCRAPE_FLAG_HOOK_FAMILIES,
 };
 use busbar_contract::abi::mechanism::call::{InHead, OutHead, Outcome};
 use busbar_contract::abi::mechanism::door::{KindTailHead, Statement};
@@ -177,7 +179,12 @@ impl SafeSlot for Scrape {
         input: Lent<'_, ScrapeIn>,
         mut out: Out<'_, ScrapeOut>,
     ) -> Outcome {
-        let body = crate::render(&lent::families(input.get()));
+        let families = lent::families(input.get());
+        let body = if input.get().head.flags & SCRAPE_FLAG_HOOK_FAMILIES != 0 {
+            crate::render_hooks(&families)
+        } else {
+            crate::render(&families)
+        };
         if lent::write(input.get(), body.as_bytes()) {
             out.set(|o| &o.written, body.len());
             Outcome::Ready

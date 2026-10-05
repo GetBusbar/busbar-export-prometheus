@@ -310,3 +310,43 @@ fn a_gauge_renders_between_the_counters_and_the_histograms_whatever_its_name() {
         ]
     );
 }
+
+/// THE HOOK LAYOUT (`/metrics/hooks`, 1.5.5's bytes): families by name whatever order they come
+/// in, `# HELP` before `# TYPE`, samples in the order handed (not re-sorted by label), and no blank
+/// line between families — where `render` would group by kind and close each family with one.
+#[test]
+fn hook_families_render_in_the_1_5_5_hook_layout() {
+    let sample = |name: &str, hook: &str, extra: Option<(&str, &str)>, value: &str| MetricSample {
+        name: name.to_string(),
+        labels: std::iter::once(("hook".to_string(), hook.to_string()))
+            .chain(extra.map(|(k, v)| (k.to_string(), v.to_string())))
+            .collect(),
+        value: value.to_string(),
+    };
+    let families = vec![
+        MetricFamily {
+            name: "zeta_total".to_string(),
+            kind: "counter".to_string(),
+            help: Some("tokens \\\\ saved".to_string()),
+            samples: vec![
+                sample("zeta_total", "b", None, "2"),
+                sample("zeta_total", "a", None, "1"),
+            ],
+        },
+        MetricFamily {
+            name: "alpha_level".to_string(),
+            kind: "gauge".to_string(),
+            help: None,
+            samples: vec![sample("alpha_level", "a", Some(("pool", "chat")), "0.5")],
+        },
+    ];
+    assert_eq!(
+        render_hooks(&families),
+        "# TYPE alpha_level gauge\n\
+         alpha_level{hook=\"a\",pool=\"chat\"} 0.5\n\
+         # HELP zeta_total tokens \\\\ saved\n\
+         # TYPE zeta_total counter\n\
+         zeta_total{hook=\"b\"} 2\n\
+         zeta_total{hook=\"a\"} 1\n"
+    );
+}

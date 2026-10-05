@@ -48,6 +48,36 @@ fn render_exposition(families: &[MetricFamily]) -> String {
     out
 }
 
+/// Render the host's HOOK families (`/metrics/hooks`, the export kind's `scrape` with
+/// `SCRAPE_FLAG_HOOK_FAMILIES`) in 1.5.5's hook exposition layout: families by name (the order the
+/// host folded them in, kept stable by name), `# HELP` when present then `# TYPE`, each family's
+/// samples in the order handed (hooks by name, then each hook's own report order), and NO blank line
+/// between families. Every label value and number is written as the host spelled it.
+pub fn render_hooks(families: &[MetricFamily]) -> String {
+    let mut ordered: Vec<&MetricFamily> = families.iter().collect();
+    ordered.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut out = String::new();
+    for f in ordered {
+        if let Some(help) = &f.help {
+            out.push_str(&format!("# HELP {} {help}\n", f.name));
+        }
+        out.push_str(&format!("# TYPE {} {}\n", f.name, f.kind));
+        for s in &f.samples {
+            out.push_str(&s.name);
+            if !s.labels.is_empty() {
+                let labels: Vec<String> = s
+                    .labels
+                    .iter()
+                    .map(|(k, v)| format!("{k}=\"{v}\""))
+                    .collect();
+                out.push_str(&format!("{{{}}}", labels.join(",")));
+            }
+            out.push_str(&format!(" {}\n", s.value));
+        }
+    }
+    out
+}
+
 /// The row's canonical name.
 pub const NAME: &str = "busbar-export-prometheus";
 

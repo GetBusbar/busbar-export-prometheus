@@ -327,7 +327,9 @@ fn transcript(dropped: bool) -> Value {
 
 /// The recorder snapshot of `exposition`, as the host's snapshot reader takes it.
 fn to_contract(exposition: &str) -> Vec<MetricFamily> {
-    busbar_plugin_loader::scrape::snapshot(exposition).expect("the exposition snapshots")
+    let families = busbar_contract::export_calls::parse_families(exposition)
+        .expect("the exposition snapshots");
+    busbar_plugin_loader::scrape::cold_families(&families)
 }
 
 /// The prometheus sink is ONE plugin through either door, and the bytes it renders are the
@@ -415,4 +417,14 @@ fn a_manifest_stating_the_1_5_5_export_abi_is_refused() {
     let err = load_dropped::<Export>(&cdylib(), &stated, bind(&dispatcher()))
         .expect_err("1.5.5's export ABI is refused");
     assert!(matches!(err, LoadError::ManifestKindAbi { .. }), "{err:?}");
+}
+
+// THE PUBLISHED CONFORMANCE SUITE, RUN BY THIS PLUGIN (busbar's loader, at the commit this repo pins):
+// the sink driven two ways through the one loader over the export kind's script with the inputs in
+// `conformance.json`, every step's crossings exactly at the script's pin, the two folds equal, and
+// the suite's RED arms kept.
+busbar_plugin_loader::conformance_suite! {
+    door: busbar_export_prometheus::door::door,
+    cdylib: "busbar_export_prometheus_plugin",
+    inputs: include_str!("conformance.json"),
 }
