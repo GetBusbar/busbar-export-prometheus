@@ -377,6 +377,9 @@ const HOOKS_HEADERS: &[AbiStr] = &[
 /// The not-ready answer's headers: retry in a second.
 const NOT_READY_HEADERS: &[AbiStr] = &[text("retry-after"), text("1")];
 
+/// A renderer of the host's families.
+type Render = fn(&[MetricFamily]) -> String;
+
 /// `serve`: the sink's own two routes, over the host snapshot service.
 pub struct Serve;
 
@@ -392,7 +395,7 @@ impl SafeSlot for Serve {
         let Some(h) = instance.get() else {
             return Outcome::Refused;
         };
-        let (scope, headers, render): (u32, &'static [AbiStr], fn(&[MetricFamily]) -> String) =
+        let (scope, headers, render): (u32, &'static [AbiStr], Render) =
             match input.field(|i| &i.path).as_str() {
                 Ok(METRICS) => (SNAPSHOT_SCOPE_WHOLE, METRICS_HEADERS, crate::render),
                 Ok(METRICS_HOOKS) => (SNAPSHOT_SCOPE_HOOKS, HOOKS_HEADERS, crate::render_hooks),
@@ -406,7 +409,10 @@ impl SafeSlot for Serve {
                 out.set(|o| &o.status_code, 200u16);
                 out.list(|o| &o.headers_out, |o| &o.headers_out_len, headers);
                 let body = render(&families).into_bytes();
-                if !body.is_empty() {
+                if body.is_empty() {
+                    // An empty exposition leases no body: the static headers still name a lease.
+                    out.keep(h.leases(), ());
+                } else {
                     out.lease(|o| &o.body, h.leases(), body, BLOB_OCTETS);
                 }
                 Outcome::Ready
@@ -418,6 +424,9 @@ impl SafeSlot for Serve {
                     |o| &o.headers_out_len,
                     NOT_READY_HEADERS,
                 );
+                // The headers are program memory and no body is leased: the answer still names a
+                // lease, as the kind's check requires of an answer that names headers.
+                out.keep(h.leases(), ());
                 Outcome::Ready
             }
             Err(_) => Outcome::Failed,
