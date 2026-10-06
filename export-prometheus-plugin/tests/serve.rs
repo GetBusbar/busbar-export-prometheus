@@ -20,7 +20,7 @@ use busbar_contract::abi::mechanism::lifecycle::{slot as lc, OpenIn, OpenOut};
 use busbar_contract::abi::sdk::door::{blank_in, blank_out};
 use busbar_contract::export_calls::{parse_families, Family};
 use busbar_contract::services::{
-    Caller, HostServices, Later, NestAsk, Ran, Reading, RecordsList, Snapshot, Stored,
+    Caller, DiskDest, HostServices, Later, NestAsk, Ran, Reading, RecordsList, Snapshot, Stored,
 };
 use busbar_plugin_loader::dispatch::kinds::export::{Export, ExportFacts};
 use busbar_plugin_loader::dispatch::{
@@ -102,6 +102,9 @@ impl HostServices for Host {
         Stored::refused("no")
     }
     fn records_secret(&self, _: &str, _: &str, _: Later) -> Ran {
+        Ran::Now(Stored::refused("no"))
+    }
+    fn disk_append(&self, _: &DiskDest, _: Vec<u8>, _: Later) -> Ran {
         Ran::Now(Stored::refused("no"))
     }
     fn unit_nest(&self, _: &Caller, _: Option<u64>, _: NestAsk, _: Later) -> Ran {

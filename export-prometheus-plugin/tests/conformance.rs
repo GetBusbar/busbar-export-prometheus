@@ -32,7 +32,7 @@ use busbar_contract::abi::mechanism::call::{AbiStr, Blob, InHead, OutHead, BLOB_
 use busbar_contract::abi::mechanism::lifecycle::{slot as lc, OpenIn, OpenOut, ValidateIn};
 use busbar_contract::abi::mechanism::rendering::RENDERING_MAGIC;
 use busbar_contract::abi::sdk::door::{blank_in, blank_out};
-use busbar_contract::abi::sdk::MetricFamily;
+use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
 use busbar_plugin_loader::dispatch::kinds::export::Export;
 use busbar_plugin_loader::dispatch::kinds::secret::Secret;
 use busbar_plugin_loader::dispatch::{
@@ -329,7 +329,25 @@ fn transcript(dropped: bool) -> Value {
 fn to_contract(exposition: &str) -> Vec<MetricFamily> {
     let families = busbar_contract::export_calls::parse_families(exposition)
         .expect("the exposition snapshots");
-    busbar_plugin_loader::scrape::cold_families(&families)
+    families
+        .iter()
+        .map(|f| MetricFamily {
+            name: f.name.clone(),
+            kind: busbar_contract::export_calls::type_word(f.kind)
+                .unwrap_or("untyped")
+                .to_string(),
+            help: f.help.clone(),
+            samples: f
+                .samples
+                .iter()
+                .map(|s| MetricSample {
+                    name: s.name.clone(),
+                    labels: s.labels.clone(),
+                    value: s.value.clone(),
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// The prometheus sink is ONE plugin through either door, and the bytes it renders are the
