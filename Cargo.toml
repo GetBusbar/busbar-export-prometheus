@@ -50,13 +50,13 @@ futures = "0.3"
 getrandom = "0.3"
 h2 = "0.4"
 hex = "0.4.3"
-hmac = "0.13.0"
 http = "1"
 http-body = "1"
 http-body-util = "0.1"
 httpdate = "1.0"
 hyper = { version = "1", default-features = false, features = ["server", "client", "http1", "http2"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "http2", "server-auto", "server-graceful", "service", "tokio"] }
+idna_adapter = "=1.1.0"
 indexmap = { version = "2", features = ["serde"] }
 jsonschema = { version = "0.49", default-features = false }
 libc = "0.2"
@@ -67,7 +67,7 @@ memchr = "2"
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 metrics-util = { version = "0.20.4", default-features = false }
-oauth-as = { version = "1.0.0", features = ["http", "jwt", "consent", "resource-metadata"] }
+oauth-as = { version = "1.0.0", features = ["http", "jwt", "consent", "resource-metadata", "par", "dpop", "client-assertion"] }
 opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "trace"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 proptest = "1"
@@ -83,7 +83,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
-sha2 = "0.11.0"
+sha2 = "0.10"
 smallvec = "1"
 socket2 = { version = "0.6", features = ["all"] }
 sonic-rs = "0.5"
