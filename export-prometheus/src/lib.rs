@@ -4,12 +4,13 @@
 //! THE PROMETHEUS EXPORT SINK — `export.<name>.module: prometheus`.
 //!
 //! A PULL sink on the export kind's memory ABI. The host keeps what only the host can own: the
-//! recorder every emit site writes, its scrape-time gauges, the well-known `/metrics` route it
-//! serves and that route's content type. This sink owns what an exposition IS: it carries the
-//! `metrics` stream (the instance subscribed to it is the one the host's scrape asks to render), it
-//! validates the settings an operator writes for it, and on every scrape the host hands it the
-//! recorder's WHOLE snapshot (`ScrapeIn::families`, in the recorder's order) and it renders the
-//! text into the host's buffer.
+//! recorder every emit site writes, its scrape-time gauges and the hook-metrics cache, which it
+//! lends through its kind-neutral snapshot service. This sink owns the rest (owner law 2026-09-27:
+//! "/metrics and /metrics/hooks leave core"): it carries the `metrics` stream (the instance
+//! subscribed to it is the scrape sink), it validates the settings an operator writes for it, it
+//! declares the well-known `GET /metrics` and `GET /metrics/hooks` as its own routes, and its
+//! `serve` reads the host's families (`snapshot.read`, in the recorder's order) and answers the
+//! exposition in 1.5.5's bytes and content types.
 //!
 //! One door, both ways in: [`door::door`] is the row a busbar build links, and the sibling
 //! `busbar-export-prometheus-plugin` cdylib exports the same door as its one symbol.
@@ -76,6 +77,24 @@ pub fn render_hooks(families: &[MetricFamily]) -> String {
         }
     }
     out
+}
+
+/// THE LIMITS CHECK across every configured instance of this sink, in configuration order: the sink
+/// states the `one_instance` mark, so a second instance is refused in 1.5.5's words, once per extra
+/// instance, naming the first.
+pub fn check_limits(instances: &[String]) -> Vec<String> {
+    let Some((first, rest)) = instances.split_first() else {
+        return Vec::new();
+    };
+    rest.iter()
+        .map(|name| {
+            format!(
+                "export.{name}: a second `module: {ALIAS}` instance (already defined as '{first}'). \
+                 Prometheus serves the ONE well-known /metrics route, so a second instance could \
+                 only be silently ignored — keep a single instance."
+            )
+        })
+        .collect()
 }
 
 /// The row's canonical name.
