@@ -32,12 +32,13 @@ use busbar_contract::abi::mechanism::call::{AbiStr, Blob, InHead, OutHead, BLOB_
 use busbar_contract::abi::mechanism::lifecycle::{slot as lc, OpenIn, OpenOut, ValidateIn};
 use busbar_contract::abi::mechanism::rendering::RENDERING_MAGIC;
 use busbar_contract::abi::sdk::door::{blank_in, blank_out};
-use busbar_contract::abi::sdk::MetricFamily;
+use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
+use busbar_contract::export_calls::type_word;
 use busbar_plugin_loader::dispatch::kinds::export::Export;
 use busbar_plugin_loader::dispatch::kinds::secret::Secret;
 use busbar_plugin_loader::dispatch::{
-    in_head, load_dropped, load_linked, out_head, Bind, Called, DispatchConfig, Dispatcher, Frame,
-    LinkedRow, LoadError, NoSink, Plugin, NO_BLOB,
+    in_head, load_dropped, load_linked, out_head, Bind, Called, ConnTable, DispatchConfig,
+    Dispatcher, Frame, LinkedRow, LoadError, NoSink, Plugin, NO_BLOB,
 };
 use serde_json::{json, Value};
 
@@ -106,7 +107,7 @@ fn bind(d: &Dispatcher) -> Bind {
         max_inflight_cap: 64,
         sink: Arc::new(NoSink),
         dispatcher: d.adopter(),
-        conns: None,
+        conns: ConnTable::NoNeeds,
     }
 }
 
@@ -325,11 +326,30 @@ fn transcript(dropped: bool) -> Value {
     })
 }
 
-/// The recorder snapshot of `exposition`, as the host's snapshot reader takes it.
+/// The recorder snapshot of `exposition`, as the host's snapshot reader takes it
+/// (`busbar_contract::export_calls::parse_families`), in the SDK's family shape: each family's
+/// `# TYPE` word, its HELP and its samples exactly as read. Contract types only: the plugin talks to
+/// busbar over the ABI and names no loader internals (Part 2 #2).
 fn to_contract(exposition: &str) -> Vec<MetricFamily> {
     let families = busbar_contract::export_calls::parse_families(exposition)
         .expect("the exposition snapshots");
-    busbar_plugin_loader::scrape::cold_families(&families)
+    families
+        .iter()
+        .map(|f| MetricFamily {
+            name: f.name.clone(),
+            kind: type_word(f.kind).unwrap_or("untyped").to_string(),
+            help: f.help.clone(),
+            samples: f
+                .samples
+                .iter()
+                .map(|s| MetricSample {
+                    name: s.name.clone(),
+                    labels: s.labels.clone(),
+                    value: s.value.clone(),
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// The prometheus sink is ONE plugin through either door, and the bytes it renders are the
