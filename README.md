@@ -1,4 +1,4 @@
-<!-- fleet:header:begin (rendered by `busbar-release plugin sync` from GetBusbar/busbar-release template/ and busbar's plugins.yaml; edit it there) -->
+<!-- fleet:header:begin (rendered by `busbar-release plugin heal` from GetBusbar/busbar-release template/ and busbar's plugins.yaml; edit it there) -->
 # busbar-export-prometheus
 
 First-party signed kind:export plugin cdylib: the prometheus export sink (module: prometheus), packaged as a droppable busbar plugin. Drop the signed tarball into plugins/ and name it from an export.<name>.module: prometheus block.
