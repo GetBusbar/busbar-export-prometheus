@@ -34,3 +34,31 @@ fn no_source_file_names_the_contract_abi_range() {
         }
     }
 }
+
+/// THE ORDERING RATIONALE SITS ON THE ORDERING: `canonical_order`, the function that orders a
+/// snapshot, carries the doc that explains the order, and the small kind-ranking helper carries its
+/// own. RED before the fix: the rationale sat on `kind_rank` and `canonical_order` had none.
+#[test]
+fn the_ordering_function_carries_its_doc() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+    let text = std::fs::read_to_string(&path).expect("the crate root");
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("fn canonical_order("))
+        .expect("canonical_order is defined");
+    assert!(
+        at > 0 && lines[at - 1].trim_start().starts_with("///"),
+        "canonical_order has no doc of its own"
+    );
+    let doc: String = lines[..at]
+        .iter()
+        .rev()
+        .take_while(|l| l.trim_start().starts_with("///"))
+        .copied()
+        .collect();
+    assert!(
+        doc.contains("THE KIND GROUPING"),
+        "the ordering rationale is not on canonical_order"
+    );
+}
