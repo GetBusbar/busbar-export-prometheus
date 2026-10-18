@@ -154,6 +154,17 @@ pub fn render(families: &[MetricFamily]) -> String {
     render_exposition(&canonical_order(families))
 }
 
+/// A family kind's place in the stable order: counters, then gauges, then distributions
+/// (histogram and summary), then anything else.
+fn kind_rank(kind: &str) -> u8 {
+    match kind {
+        "counter" => 0,
+        "gauge" => 1,
+        "histogram" | "summary" => 2,
+        _ => 3, // "untyped" or anything else the wire never actually carries
+    }
+}
+
 /// The snapshot in a STABLE order: families grouped by KIND — every counter, then every gauge,
 /// then every histogram/summary (a distribution) — and by name within a kind's group; and within a
 /// family its series by their labels. The recorder hands families and series over in its maps' hash
@@ -173,15 +184,6 @@ pub fn render(families: &[MetricFamily]) -> String {
 /// and `_count`. A series is moved as a unit and its own lines keep the order the recorder wrote
 /// them in (buckets ascending, then `_sum`, then `_count`), so every output is one of the orders
 /// the recorder could already print.
-fn kind_rank(kind: &str) -> u8 {
-    match kind {
-        "counter" => 0,
-        "gauge" => 1,
-        "histogram" | "summary" => 2,
-        _ => 3, // "untyped" or anything else the wire never actually carries
-    }
-}
-
 fn canonical_order(families: &[MetricFamily]) -> Vec<MetricFamily> {
     let mut out = families.to_vec();
     out.sort_by(|a, b| {
