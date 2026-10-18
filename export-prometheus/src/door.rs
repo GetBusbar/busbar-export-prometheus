@@ -15,18 +15,18 @@
 //! * `status` and `check` — READY with nothing to report. `serve` — REFUSED: no route of its own
 //!   (the host serves `/metrics`).
 //!
-//! The one `unsafe` here is [`lent`]: the export kind's `ScrapeIn` lends its families and its
-//! buffer as raw pointers, and the SDK states no safe accessor for them.
+//! No `unsafe` here: the snapshot and the buffer `scrape` is lent are read and written through the
+//! SDK's safe lend (`families()`, `samples()`, `labels()`, `buf()`).
 
 use busbar_contract::abi::export::{
     cancel, CheckIn, CheckOut, DeliverIn, ExportStream, ScrapeIn, ScrapeOut, ServeIn, ServeOut,
     StatusOut, Tail, SCRAPE_FLAG_HOOK_FAMILIES,
 };
-use busbar_contract::abi::mechanism::call::{InHead, OutHead, Outcome};
+use busbar_contract::abi::mechanism::call::{AbiStr, InHead, OutHead, Outcome};
 use busbar_contract::abi::mechanism::door::{KindTailHead, Statement};
 use busbar_contract::abi::sdk::door::statement;
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
-use busbar_contract::abi::sdk::{Instance, Lent, Out, Safe, SafeSlot};
+use busbar_contract::abi::sdk::{Instance, Lent, MetricFamily, MetricSample, Out, Safe, SafeSlot};
 
 use crate::NAME;
 
@@ -70,101 +70,42 @@ impl Life for Prometheus {
     }
 }
 
-/// THE ONE READ AND WRITE OF HOST-LENT POINTERS the safe SDK does not cover for this kind.
-#[allow(unsafe_code)]
-mod lent {
-    use busbar_contract::abi::export::{
-        ScrapeFamily, ScrapeIn, ScrapeLabel, ScrapeSample, SCRAPE_KIND_COUNTER, SCRAPE_KIND_GAUGE,
-        SCRAPE_KIND_HISTOGRAM, SCRAPE_KIND_SUMMARY,
-    };
-    use busbar_contract::abi::mechanism::call::AbiStr;
-    use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
+/// The text `s` names, through the SDK's safe lend; `None` when it is absent (a NULL string).
+fn text(s: Lent<'_, AbiStr>) -> Option<String> {
+    (!s.ptr.is_null()).then(|| String::from_utf8_lossy(s.bytes()).into_owned())
+}
 
-    /// `len` values at `p`, or none for a NULL `p`.
-    ///
-    /// # Safety
-    /// A non-NULL `p` points at `len` initialized values, lent for the call.
-    unsafe fn list<'a, T>(p: *const T, len: usize) -> &'a [T] {
-        if p.is_null() || len == 0 {
-            return &[];
-        }
-        // SAFETY: the caller's contract.
-        std::slice::from_raw_parts(p, len)
-    }
-
-    /// The text `s` names; `None` when it is absent.
-    ///
-    /// # Safety
-    /// A non-NULL `s.ptr` points at `s.len` bytes, lent for the call.
-    unsafe fn text(s: AbiStr) -> Option<String> {
-        if s.ptr.is_null() {
-            return None;
-        }
-        // SAFETY: the caller's contract.
-        let bytes = list(s.ptr, s.len);
-        Some(String::from_utf8_lossy(bytes).into_owned())
-    }
-
-    fn kind(k: u8) -> &'static str {
-        match k {
-            SCRAPE_KIND_COUNTER => "counter",
-            SCRAPE_KIND_GAUGE => "gauge",
-            SCRAPE_KIND_HISTOGRAM => "histogram",
-            SCRAPE_KIND_SUMMARY => "summary",
-            _ => "untyped",
-        }
-    }
-
-    /// The snapshot `input` lends, in the order the host gave it.
-    pub(super) fn families(input: &ScrapeIn) -> Vec<MetricFamily> {
-        // SAFETY (every read below): the export kind's ABI lends `families` and, inside each, its
-        // `samples`, their `labels` and every string as lists and bytes valid for the call.
-        let families: &[ScrapeFamily] = unsafe { list(input.families, input.families_len) };
-        families
-            .iter()
-            .map(|f| {
-                let samples: &[ScrapeSample] = unsafe { list(f.samples, f.samples_len) };
-                MetricFamily {
-                    name: unsafe { text(f.name) }.unwrap_or_default(),
-                    kind: kind(f.kind).to_string(),
-                    help: unsafe { text(f.help) },
-                    samples: samples
+/// The snapshot `input` lends, in the order the host gave it, read through the SDK's accessors.
+fn families(input: Lent<'_, ScrapeIn>) -> Vec<MetricFamily> {
+    input
+        .families()
+        .iter()
+        .map(|f| MetricFamily {
+            name: text(f.field(|f| &f.name)).unwrap_or_default(),
+            kind: busbar_contract::export_calls::type_word(f.kind)
+                .unwrap_or("untyped")
+                .to_string(),
+            help: text(f.field(|f| &f.help)),
+            samples: f
+                .samples()
+                .iter()
+                .map(|s| MetricSample {
+                    name: text(s.field(|s| &s.name)).unwrap_or_default(),
+                    labels: s
+                        .labels()
                         .iter()
-                        .map(|s| {
-                            let labels: &[ScrapeLabel] = unsafe { list(s.labels, s.labels_len) };
-                            MetricSample {
-                                name: unsafe { text(s.name) }.unwrap_or_default(),
-                                labels: labels
-                                    .iter()
-                                    .map(|l| unsafe {
-                                        (
-                                            text(l.key).unwrap_or_default(),
-                                            text(l.value).unwrap_or_default(),
-                                        )
-                                    })
-                                    .collect(),
-                                value: unsafe { text(s.value) }.unwrap_or_default(),
-                            }
+                        .map(|l| {
+                            (
+                                text(l.field(|l| &l.key)).unwrap_or_default(),
+                                text(l.field(|l| &l.value)).unwrap_or_default(),
+                            )
                         })
                         .collect(),
-                }
-            })
-            .collect()
-    }
-
-    /// Copy `bytes` into the host's buffer when they fit: `true` when written.
-    pub(super) fn write(input: &ScrapeIn, bytes: &[u8]) -> bool {
-        if bytes.len() > input.cap || (input.buf.is_null() && !bytes.is_empty()) {
-            return false;
-        }
-        if !bytes.is_empty() {
-            // SAFETY: the export kind's ABI lends `buf` as `cap` writable bytes for the call,
-            // overlapping nothing else it lends; `bytes.len() <= cap`.
-            unsafe { std::slice::from_raw_parts_mut(input.buf, bytes.len()) }
-                .copy_from_slice(bytes);
-        }
-        true
-    }
+                    value: text(s.field(|s| &s.value)).unwrap_or_default(),
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// `scrape`: the snapshot rendered into the host's buffer.
@@ -179,17 +120,19 @@ impl SafeSlot for Scrape {
         input: Lent<'_, ScrapeIn>,
         mut out: Out<'_, ScrapeOut>,
     ) -> Outcome {
-        let families = lent::families(input.get());
-        let body = if input.get().head.flags & SCRAPE_FLAG_HOOK_FAMILIES != 0 {
+        let families = families(input);
+        let body = if input.head.flags & SCRAPE_FLAG_HOOK_FAMILIES != 0 {
             crate::render_hooks(&families)
         } else {
             crate::render(&families)
         };
-        if lent::write(input.get(), body.as_bytes()) {
-            out.set(|o| &o.written, body.len());
+        let mut buf = input.buf();
+        buf.extend(body.as_bytes());
+        if buf.fits() {
+            out.set(|o| &o.written, buf.written());
             Outcome::Ready
         } else {
-            out.set(|o| &o.needed, body.len());
+            out.set(|o| &o.needed, buf.needed());
             Outcome::Failed
         }
     }
