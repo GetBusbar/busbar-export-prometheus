@@ -21,10 +21,10 @@ pub mod door;
 
 use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
 
-/// Render the host recorder's snapshot (export ABI minor 6) in the Prometheus TEXT exposition
-/// format, family by family: `# HELP` (when present), `# TYPE`, the samples, a blank line. Every
-/// label value and number is written as the snapshot carries it, so rendering a snapshot of the
-/// host's own exposition reproduces it byte for byte.
+/// Render the host recorder's snapshot (the export kind's families) in the Prometheus TEXT
+/// exposition format, family by family: `# HELP` (when present), `# TYPE`, the samples, a blank
+/// line. Every label value and number is written as the snapshot carries it, so rendering a
+/// snapshot of the host's own exposition reproduces it byte for byte.
 fn render_exposition(families: &[MetricFamily]) -> String {
     let mut out = String::new();
     for f in families {
