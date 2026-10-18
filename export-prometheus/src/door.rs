@@ -6,32 +6,74 @@
 //! [`SafeSlot`].
 //!
 //! * `validate` — [`crate::validate`]: the configuration's words, the zero-retention refusal included.
-//! * `open` / `refresh` — nothing to hold: every scrape carries the whole snapshot it renders.
-//! * `scrape` — the snapshot rendered ([`crate::render`]) into the host's buffer; a buffer too
-//!   small is FAILED with the bytes `needed`, nothing written, and the host calls again once. With
-//!   `SCRAPE_FLAG_HOOK_FAMILIES` on the head the families are the host's hook families and render
-//!   as 1.5.5's `/metrics/hooks` ([`crate::render_hooks`]).
+//! * `open` / `refresh` — nothing to hold but the size the last snapshot took (the buffer the next
+//!   read starts with).
+//! * `serve` — THE SINK'S OWN ROUTES (`BUSBAR-1.6.0.md` Appendix A B.5, l.3829: "`/metrics` and
+//!   `/metrics/hooks` are the scrape sink's own listener needs: declared in its `routes` list,
+//!   served on the data listener behind the data key, and answered by its `serve`"; §5
+//!   l.626-628). The Statement declares `GET /metrics` and `GET /metrics/hooks` behind the data
+//!   key; `serve` reads the host's families through the host snapshot service (`snapshot.read`,
+//!   scope WHOLE or HOOKS) and answers 1.5.5's bytes: `200` with the exposition
+//!   ([`crate::render`]) under `text/plain; version=0.0.4`, or the hook exposition
+//!   ([`crate::render_hooks`]) under `text/plain; version=0.0.4; charset=utf-8`; NOT READY (the
+//!   host's recorder is not installed yet) is `503` with `Retry-After: 1` and no body. A read the
+//!   host declines is FAILED (the host answers `502`); any other path is REFUSED.
+//! * `scrape` — a snapshot the host hands in, rendered ([`crate::render`]) into the host's buffer; a
+//!   buffer too small is FAILED with the bytes `needed`, nothing written, and the host calls again
+//!   once. With `SCRAPE_FLAG_HOOK_FAMILIES` on the head the families are the host's hook families
+//!   and render as 1.5.5's `/metrics/hooks` ([`crate::render_hooks`]).
 //! * `deliver` — READY, nothing kept: the host pulls `metrics`, it never pushes them.
-//! * `status` and `check` — READY with nothing to report. `serve` — REFUSED: no route of its own
-//!   (the host serves `/metrics`).
+//! * `status` and `check` — READY with nothing to report.
 //!
 //! No `unsafe` here: the snapshot and the buffer `scrape` is lent are read and written through the
 //! SDK's safe lend (`families()`, `samples()`, `labels()`, `buf()`).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use busbar_contract::abi::export::{
-    cancel, CheckIn, CheckOut, DeliverIn, ExportStream, ScrapeIn, ScrapeOut, ServeIn, ServeOut,
-    StatusOut, Tail, SCRAPE_FLAG_HOOK_FAMILIES,
+    cancel, CheckIn, CheckOut, DeliverIn, ExportStream, Route, ScrapeIn, ScrapeOut, ServeIn,
+    ServeOut, StatusOut, Tail, ROUTE_AUTH_KEY, SCRAPE_FLAG_HOOK_FAMILIES,
 };
-use busbar_contract::abi::mechanism::call::{AbiStr, InHead, OutHead, Outcome};
+use busbar_contract::abi::host::service::{SNAPSHOT_SCOPE_HOOKS, SNAPSHOT_SCOPE_WHOLE};
+use busbar_contract::abi::mechanism::call::{AbiStr, InHead, OutHead, Outcome, BLOB_OCTETS};
 use busbar_contract::abi::mechanism::door::{KindTailHead, Statement};
+use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
 use busbar_contract::abi::sdk::door::statement;
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
-use busbar_contract::abi::sdk::{Instance, Lent, MetricFamily, MetricSample, Out, Safe, SafeSlot};
+use busbar_contract::abi::sdk::{
+    Instance, Lent, MetricFamily, MetricSample, Out, Safe, SafeSlot, ServiceError, Services,
+};
 
 use crate::NAME;
 
 /// The one stream the sink carries.
 const STREAMS: &[u8] = &[ExportStream::Metrics as u8];
+
+/// A `'static` string as the ABI names it.
+const fn abi(s: &'static str) -> AbiStr {
+    AbiStr {
+        ptr: s.as_ptr(),
+        len: s.len(),
+    }
+}
+
+/// The well-known exposition path.
+const METRICS: &str = "/metrics";
+/// The well-known hook exposition path.
+const METRICS_HOOKS: &str = "/metrics/hooks";
+
+/// `GET path` behind the data plane's key.
+const fn get(path: &'static str) -> Route {
+    Route {
+        path: abi(path),
+        method: abi("GET"),
+        auth: ROUTE_AUTH_KEY,
+        _reserved: 0,
+    }
+}
+
+/// The sink's own routes: the two well-known expositions, 1.5.5's paths behind the data key.
+const ROUTES: &[Route] = &[get(METRICS), get(METRICS_HOOKS)];
 
 const TAIL: Tail = Tail {
     head: KindTailHead {
@@ -40,19 +82,74 @@ const TAIL: Tail = Tail {
     },
     streams: STREAMS.as_ptr(),
     streams_len: STREAMS.len(),
-    routes: std::ptr::null(),
-    routes_len: 0,
+    routes: ROUTES.as_ptr(),
+    routes_len: ROUTES.len(),
 };
 
-/// This plugin's Statement: its name and version and the `metrics` stream.
+/// This plugin's Statement: its name and version, the `metrics` stream and its two routes.
 pub const STATEMENT: Statement = Statement {
     kind_tail: (&TAIL as *const Tail).cast::<KindTailHead>(),
     ..statement(NAME, env!("CARGO_PKG_VERSION"), 64)
 };
 
-/// One opened instance. It holds nothing.
+/// The buffer the first snapshot read starts with.
+const FIRST_READ: usize = 64 * 1024;
+
+/// One opened instance: it holds only the size the last snapshot took, the buffer the next read
+/// starts with.
 #[derive(Debug)]
-pub struct Prometheus;
+pub struct Prometheus {
+    read_hint: AtomicUsize,
+}
+
+impl Prometheus {
+    /// The host's families of `scope` through the host snapshot service, into a buffer of the last
+    /// read's size; a short buffer earns the one re-call, with headroom (a ticket-less re-call reads
+    /// the snapshot again, which may have grown). `None` = not ready.
+    fn read(
+        &self,
+        services: &Services,
+        scope: u32,
+    ) -> Result<Option<Vec<MetricFamily>>, ServiceError> {
+        let none = CompletionHandle {
+            ticket: Ticket::NONE,
+            seq: 0,
+            _reserved: 0,
+        };
+        let mut buf = vec![0u64; self.read_hint.load(Ordering::Relaxed).div_ceil(8)];
+        let read = match services.snapshot_read(none, scope, &mut buf) {
+            Err(ServiceError::Short { bytes, .. }) => {
+                let want = usize::try_from(bytes).unwrap_or(usize::MAX / 2);
+                let want = want.saturating_add(want / 4);
+                self.read_hint.store(want, Ordering::Relaxed);
+                buf = vec![0u64; want.div_ceil(8)];
+                services.snapshot_read(none, scope, &mut buf)
+            }
+            other => other,
+        };
+        read.map(|families| families.map(|f| f.into_iter().map(lift).collect()))
+    }
+}
+
+/// One host family, as the renderer reads it.
+fn lift(f: busbar_contract::export_calls::Family) -> MetricFamily {
+    MetricFamily {
+        kind: busbar_contract::export_calls::type_word(f.kind)
+            .unwrap_or("untyped")
+            .to_string(),
+        name: f.name,
+        help: f.help,
+        samples: f
+            .samples
+            .into_iter()
+            .map(|s| MetricSample {
+                name: s.name,
+                labels: s.labels,
+                value: s.value,
+            })
+            .collect(),
+    }
+}
 
 impl Life for Prometheus {
     const CANCEL: u32 = cancel::ABORTED;
@@ -62,7 +159,9 @@ impl Life for Prometheus {
     }
 
     fn open(_: &[u8], _: &[&[u8]], _: u64) -> Result<Self, Refusal> {
-        Ok(Self)
+        Ok(Self {
+            read_hint: AtomicUsize::new(FIRST_READ),
+        })
     }
 
     fn refresh(&self, _: &[u8], _: &[&[u8]], _: u64) -> Result<Refreshed, Refusal> {
@@ -186,7 +285,18 @@ impl SafeSlot for Check {
     }
 }
 
-/// `serve`: REFUSED — the host serves `/metrics`; the sink claims no route.
+/// `/metrics`' response headers: 1.5.5's content type (oracle cell `ops.scrape__metrics__key`).
+const METRICS_HEADERS: &[AbiStr] = &[abi("content-type"), abi("text/plain; version=0.0.4")];
+/// `/metrics/hooks`' response headers: 1.5.5's content type, which carried a charset (oracle cell
+/// `ops.scrape__metricshooks__key`).
+const HOOKS_HEADERS: &[AbiStr] = &[
+    abi("content-type"),
+    abi("text/plain; version=0.0.4; charset=utf-8"),
+];
+/// The not-ready answer's headers: retry in a second.
+const NOT_READY_HEADERS: &[AbiStr] = &[abi("retry-after"), abi("1")];
+
+/// `serve`: the sink's own two routes, over the host snapshot service.
 pub struct Serve;
 
 impl SafeSlot for Serve {
@@ -194,11 +304,37 @@ impl SafeSlot for Serve {
     type Out = ServeOut;
     type State = Held<Prometheus>;
     fn call(
-        _: Instance<'_, Held<Prometheus>>,
-        _: Lent<'_, ServeIn>,
-        _: Out<'_, ServeOut>,
+        instance: Instance<'_, Held<Prometheus>>,
+        input: Lent<'_, ServeIn>,
+        mut out: Out<'_, ServeOut>,
     ) -> Outcome {
-        Outcome::Refused
+        let Some(h) = instance.get() else {
+            return Outcome::Refused;
+        };
+        let (scope, headers, render): (u32, &'static [AbiStr], fn(&[MetricFamily]) -> String) =
+            match input.field(|i| &i.path).as_str() {
+                Ok(METRICS) => (SNAPSHOT_SCOPE_WHOLE, METRICS_HEADERS, crate::render),
+                Ok(METRICS_HOOKS) => (SNAPSHOT_SCOPE_HOOKS, HOOKS_HEADERS, crate::render_hooks),
+                _ => return Outcome::Refused,
+            };
+        let Some(services) = h.host().and_then(|host| host.services()) else {
+            return Outcome::Failed;
+        };
+        let (status, headers, body) = match h.life().read(&services, scope) {
+            Ok(Some(families)) => (200u16, headers, render(&families).into_bytes()),
+            Ok(None) => (503u16, NOT_READY_HEADERS, Vec::new()),
+            Err(_) => return Outcome::Failed,
+        };
+        out.set(|o| &o.status_code, status);
+        // The header list is program memory; the answer names material, so it names a lease (the
+        // body's, or one kept for the list alone).
+        out.list(|o| &o.headers_out, |o| &o.headers_out_len, headers);
+        if body.is_empty() {
+            out.keep(h.leases(), ());
+        } else {
+            out.lease(|o| &o.body, h.leases(), body, BLOB_OCTETS);
+        }
+        Outcome::Ready
     }
 }
 
