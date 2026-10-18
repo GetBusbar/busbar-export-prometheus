@@ -318,6 +318,10 @@ const HOOKS_HEADERS: &[AbiStr] = &[
 /// The not-ready answer's headers: retry in a second.
 const NOT_READY_HEADERS: &[AbiStr] = &[abi("retry-after"), abi("1")];
 
+/// What one route answers from: the snapshot scope it reads, its response headers and its
+/// renderer.
+type Exposition = (u32, &'static [AbiStr], fn(&[MetricFamily]) -> String);
+
 /// `serve`: the sink's own two routes, over the host snapshot service.
 pub struct Serve;
 
@@ -333,12 +337,11 @@ impl SafeSlot for Serve {
         let Some(h) = instance.get() else {
             return Outcome::Refused;
         };
-        let (scope, headers, render): (u32, &'static [AbiStr], fn(&[MetricFamily]) -> String) =
-            match input.field(|i| &i.path).as_str() {
-                Ok(METRICS) => (SNAPSHOT_SCOPE_WHOLE, METRICS_HEADERS, crate::render),
-                Ok(METRICS_HOOKS) => (SNAPSHOT_SCOPE_HOOKS, HOOKS_HEADERS, crate::render_hooks),
-                _ => return Outcome::Refused,
-            };
+        let (scope, headers, render): Exposition = match input.field(|i| &i.path).as_str() {
+            Ok(METRICS) => (SNAPSHOT_SCOPE_WHOLE, METRICS_HEADERS, crate::render),
+            Ok(METRICS_HOOKS) => (SNAPSHOT_SCOPE_HOOKS, HOOKS_HEADERS, crate::render_hooks),
+            _ => return Outcome::Refused,
+        };
         let Some(services) = h.host().and_then(|host| host.services()) else {
             return Outcome::Failed;
         };
