@@ -106,14 +106,13 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
     assert_eq!(render(&[]), "", "an empty recorder renders nothing");
 }
 
-/// The sink declares its contract-ABI range and nothing else.
+/// The sink declares no series, no code and no destination.
 #[test]
-fn it_declares_its_contract_abi_range_and_nothing_else() {
+fn it_declares_no_series_code_or_destination() {
     let stated: serde_json::Value = serde_json::from_str(DECLARES).expect("declares.json parses");
-    assert_eq!(
-        stated,
-        serde_json::json!({"contract_abi": {"min": 3, "max": 3}})
-    );
+    for key in ["metrics", "diagnostics", "destinations"] {
+        assert_eq!(stated.get(key), None, "declares states `{key}`");
+    }
     assert_eq!((NAME, ALIAS), ("busbar-export-prometheus", "prometheus"));
 }
 

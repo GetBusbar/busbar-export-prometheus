@@ -87,9 +87,8 @@ pub const NAME: &str = "busbar-export-prometheus";
 pub const ALIAS: &str = "prometheus";
 
 /// What this sink DECLARES to the host (the manifest's `declares` section, `declares.json`, which
-/// `busbar-plugin-pack --declares-file` signs into the tarball): the contract-ABI range it speaks
-/// (`contract_abi`), and nothing else. It reports no series, raises no code of its own and has no
-/// destination.
+/// `busbar-plugin-pack --declares-file` signs into the tarball): it reports no series, raises no
+/// code of its own and has no destination.
 pub const DECLARES: &str = include_str!("../declares.json");
 
 /// The `settings:` an operator writes for this sink — the same shape, field for field, the
