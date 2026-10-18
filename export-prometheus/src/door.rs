@@ -23,7 +23,9 @@
 //!   once. With `SCRAPE_FLAG_HOOK_FAMILIES` on the head the families are the host's hook families
 //!   and render as 1.5.5's `/metrics/hooks` ([`crate::render_hooks`]).
 //! * `deliver` — READY, nothing kept: the host pulls `metrics`, it never pushes them.
-//! * `status` and `check` — READY with nothing to report.
+//! * `status` — READY with nothing to report. `check` — at the limits phase, 1.5.5's refusal of
+//!   every instance after the first ([`crate::check_limits`]): the sink states the `one_instance`
+//!   mark, so the host asks it while the configuration is resolved; READY with nothing otherwise.
 //!
 //! No `unsafe` here: the snapshot and the buffer `scrape` is lent are read and written through the
 //! SDK's safe lend (`families()`, `samples()`, `labels()`, `buf()`).
@@ -32,11 +34,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use busbar_contract::abi::export::{
     cancel, CheckIn, CheckOut, DeliverIn, ExportStream, Route, ScrapeIn, ScrapeOut, ServeIn,
-    ServeOut, StatusOut, Tail, ROUTE_AUTH_KEY, SCRAPE_FLAG_HOOK_FAMILIES,
+    ServeOut, StatusOut, Tail, CHECK_PHASE_LIMITS, ROUTE_AUTH_KEY, SCRAPE_FLAG_HOOK_FAMILIES,
 };
 use busbar_contract::abi::host::service::{SNAPSHOT_SCOPE_HOOKS, SNAPSHOT_SCOPE_WHOLE};
-use busbar_contract::abi::mechanism::call::{AbiStr, InHead, OutHead, Outcome, BLOB_OCTETS};
-use busbar_contract::abi::mechanism::door::{KindTailHead, Statement};
+use busbar_contract::abi::mechanism::call::{
+    AbiStr, InHead, OutHead, Outcome, BLOB_JSON, BLOB_OCTETS,
+};
+use busbar_contract::abi::mechanism::door::{KindTailHead, Statement, MARK_ONE_INSTANCE};
 use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
 use busbar_contract::abi::sdk::door::statement;
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
@@ -89,6 +93,8 @@ const TAIL: Tail = Tail {
 /// This plugin's Statement: its name and version, the `metrics` stream and its two routes.
 pub const STATEMENT: Statement = Statement {
     kind_tail: (&TAIL as *const Tail).cast::<KindTailHead>(),
+    // One scrape sink renders the ONE well-known `/metrics`: at most one instance.
+    marks: MARK_ONE_INSTANCE,
     ..statement(NAME, env!("CARGO_PKG_VERSION"), 64)
 };
 
@@ -269,7 +275,7 @@ impl SafeSlot for Status {
     }
 }
 
-/// `check`: the sink has no checks of its own.
+/// `check`: at the limits phase, a second instance refused in 1.5.5's words.
 pub struct Check;
 
 impl SafeSlot for Check {
@@ -277,10 +283,26 @@ impl SafeSlot for Check {
     type Out = CheckOut;
     type State = Held<Prometheus>;
     fn call(
-        _: Instance<'_, Held<Prometheus>>,
-        _: Lent<'_, CheckIn>,
-        _: Out<'_, CheckOut>,
+        instance: Instance<'_, Held<Prometheus>>,
+        input: Lent<'_, CheckIn>,
+        mut out: Out<'_, CheckOut>,
     ) -> Outcome {
+        let Some(h) = instance.get() else {
+            return Outcome::Refused;
+        };
+        if input.phase != CHECK_PHASE_LIMITS {
+            return Outcome::Ready;
+        }
+        let names: Vec<String> = input
+            .instances()
+            .iter()
+            .map(|c| text(c.field(|c| &c.name)).unwrap_or_default())
+            .collect();
+        let lines = crate::check_limits(&names);
+        if !lines.is_empty() {
+            let json = serde_json::to_vec(&lines).unwrap_or_default();
+            out.lease(|o| &o.findings, h.leases(), json, BLOB_JSON);
+        }
         Outcome::Ready
     }
 }
