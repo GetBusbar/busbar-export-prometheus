@@ -4,12 +4,13 @@
 //! THE PROMETHEUS EXPORT SINK — `export.<name>.module: prometheus`.
 //!
 //! A PULL sink on the export kind's memory ABI. The host keeps what only the host can own: the
-//! recorder every emit site writes, its scrape-time gauges, the well-known `/metrics` route it
-//! serves and that route's content type. This sink owns what an exposition IS: it carries the
-//! `metrics` stream (the instance subscribed to it is the one the host's scrape asks to render), it
-//! validates the settings an operator writes for it, and on every scrape the host hands it the
-//! recorder's WHOLE snapshot (`ScrapeIn::families`, in the recorder's order) and it renders the
-//! text into the host's buffer.
+//! recorder every emit site writes, its scrape-time gauges and the hook-metrics cache, which it
+//! lends through its kind-neutral snapshot service. This sink owns the rest (`BUSBAR-1.6.0.md` §5
+//! l.626-628, Appendix A B.5 l.3829): it carries the `metrics` stream, it validates the settings an
+//! operator writes for it, it declares the well-known `GET /metrics` and `GET /metrics/hooks` as its
+//! own routes behind the data key, and its `serve` reads the host's families (`snapshot.read`, in
+//! the recorder's order) and answers the exposition in 1.5.5's bytes and content types. A snapshot
+//! the host hands to `scrape` renders the same way into the host's buffer.
 //!
 //! One door, both ways in: [`door::door`] is the row a busbar build links, and the sibling
 //! `busbar-export-prometheus-plugin` cdylib exports the same door as its one symbol.
@@ -20,10 +21,10 @@ pub mod door;
 
 use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
 
-/// Render the host recorder's snapshot (export ABI minor 6) in the Prometheus TEXT exposition
-/// format, family by family: `# HELP` (when present), `# TYPE`, the samples, a blank line. Every
-/// label value and number is written as the snapshot carries it, so rendering a snapshot of the
-/// host's own exposition reproduces it byte for byte.
+/// Render the host recorder's snapshot (the export kind's families) in the Prometheus TEXT
+/// exposition format, family by family: `# HELP` (when present), `# TYPE`, the samples, a blank
+/// line. Every label value and number is written as the snapshot carries it, so rendering a
+/// snapshot of the host's own exposition reproduces it byte for byte.
 fn render_exposition(families: &[MetricFamily]) -> String {
     let mut out = String::new();
     for f in families {
@@ -78,6 +79,24 @@ pub fn render_hooks(families: &[MetricFamily]) -> String {
     out
 }
 
+/// THE LIMITS CHECK across every configured instance of this sink, in configuration order: the sink
+/// states the `one_instance` mark, so a second instance is refused in 1.5.5's words (shadow-oracle
+/// cell `boot.refusal__BOOT-102__validate`), once per extra instance, naming the first.
+pub fn check_limits(instances: &[String]) -> Vec<String> {
+    let Some((first, rest)) = instances.split_first() else {
+        return Vec::new();
+    };
+    rest.iter()
+        .map(|name| {
+            format!(
+                "export.{name}: a second `module: {ALIAS}` instance (already defined as '{first}'). \
+                 Prometheus serves the ONE well-known /metrics route, so a second instance could \
+                 only be silently ignored — keep a single instance."
+            )
+        })
+        .collect()
+}
+
 /// The row's canonical name.
 pub const NAME: &str = "busbar-export-prometheus";
 
@@ -86,9 +105,8 @@ pub const NAME: &str = "busbar-export-prometheus";
 pub const ALIAS: &str = "prometheus";
 
 /// What this sink DECLARES to the host (the manifest's `declares` section, `declares.json`, which
-/// `busbar-plugin-pack --declares-file` signs into the tarball): the contract-ABI range it speaks
-/// (`contract_abi`), and nothing else. It reports no series, raises no code of its own and has no
-/// destination.
+/// `busbar-plugin-pack --declares-file` signs into the tarball): it reports no series, raises no
+/// code of its own and has no destination.
 pub const DECLARES: &str = include_str!("../declares.json");
 
 /// The `settings:` an operator writes for this sink — the same shape, field for field, the
@@ -136,6 +154,17 @@ pub fn render(families: &[MetricFamily]) -> String {
     render_exposition(&canonical_order(families))
 }
 
+/// A family kind's place in the stable order: counters, then gauges, then distributions
+/// (histogram and summary), then anything else.
+fn kind_rank(kind: &str) -> u8 {
+    match kind {
+        "counter" => 0,
+        "gauge" => 1,
+        "histogram" | "summary" => 2,
+        _ => 3, // "untyped" or anything else the wire never actually carries
+    }
+}
+
 /// The snapshot in a STABLE order: families grouped by KIND — every counter, then every gauge,
 /// then every histogram/summary (a distribution) — and by name within a kind's group; and within a
 /// family its series by their labels. The recorder hands families and series over in its maps' hash
@@ -155,15 +184,6 @@ pub fn render(families: &[MetricFamily]) -> String {
 /// and `_count`. A series is moved as a unit and its own lines keep the order the recorder wrote
 /// them in (buckets ascending, then `_sum`, then `_count`), so every output is one of the orders
 /// the recorder could already print.
-fn kind_rank(kind: &str) -> u8 {
-    match kind {
-        "counter" => 0,
-        "gauge" => 1,
-        "histogram" | "summary" => 2,
-        _ => 3, // "untyped" or anything else the wire never actually carries
-    }
-}
-
 fn canonical_order(families: &[MetricFamily]) -> Vec<MetricFamily> {
     let mut out = families.to_vec();
     out.sort_by(|a, b| {

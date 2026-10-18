@@ -106,14 +106,13 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
     assert_eq!(render(&[]), "", "an empty recorder renders nothing");
 }
 
-/// The sink declares its contract-ABI range and nothing else.
+/// The sink declares no series, no code and no destination.
 #[test]
-fn it_declares_its_contract_abi_range_and_nothing_else() {
+fn it_declares_no_series_code_or_destination() {
     let stated: serde_json::Value = serde_json::from_str(DECLARES).expect("declares.json parses");
-    assert_eq!(
-        stated,
-        serde_json::json!({"contract_abi": {"min": 3, "max": 3}})
-    );
+    for key in ["metrics", "diagnostics", "destinations"] {
+        assert_eq!(stated.get(key), None, "declares states `{key}`");
+    }
     assert_eq!((NAME, ALIAS), ("busbar-export-prometheus", "prometheus"));
 }
 
@@ -348,5 +347,37 @@ fn hook_families_render_in_the_1_5_5_hook_layout() {
          # TYPE zeta_total counter\n\
          zeta_total{hook=\"b\"} 2\n\
          zeta_total{hook=\"a\"} 1\n"
+    );
+}
+
+/// THE ONE-INSTANCE REFUSAL, in the words busbar 1.5.5 refused a second scrape-sink instance with:
+/// one line per instance after the first, naming the first; one instance, or none, is no finding.
+#[test]
+fn a_second_instance_is_refused_in_1_5_5_words() {
+    assert!(check_limits(&[]).is_empty());
+    assert!(check_limits(&["metrics".to_string()]).is_empty());
+    let names = ["metrics", "again", "third"].map(String::from);
+    assert_eq!(
+        check_limits(&names),
+        vec![
+            "export.again: a second `module: prometheus` instance (already defined as 'metrics'). \
+             Prometheus serves the ONE well-known /metrics route, so a second instance could only \
+             be silently ignored — keep a single instance."
+                .to_string(),
+            "export.third: a second `module: prometheus` instance (already defined as 'metrics'). \
+             Prometheus serves the ONE well-known /metrics route, so a second instance could only \
+             be silently ignored — keep a single instance."
+                .to_string(),
+        ]
+    );
+}
+
+/// The sink states the `one_instance` mark, which is what makes the host ask its limits check while
+/// the configuration is resolved.
+#[test]
+fn the_statement_marks_one_instance() {
+    assert_eq!(
+        crate::door::STATEMENT.marks & busbar_contract::abi::mechanism::door::MARK_ONE_INSTANCE,
+        busbar_contract::abi::mechanism::door::MARK_ONE_INSTANCE
     );
 }
