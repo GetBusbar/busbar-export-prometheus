@@ -8,6 +8,9 @@ rust-version = "1.97"
 description = "The prometheus export sink: renders the host recorder's snapshot as the Prometheus text exposition the host serves at the well-known /metrics. Linked into the shipped binary, or dropped in as a signed tarball — one registration, one contract."
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [lib]
 # rlib only: the logic and its door. A build that LINKS this crate registers `door::door` as its row
 # (no symbol is exported from here); the dropped-in cdylib is `busbar-export-prometheus-plugin` (same

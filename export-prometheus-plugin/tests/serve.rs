@@ -198,6 +198,7 @@ fn opened(host: Arc<Host>, dropped: bool) -> (Arc<Dispatcher>, Plugin<Export>) {
         len: settings.len(),
         fmt: busbar_contract::abi::mechanism::call::BLOB_JSON,
         flags: 0,
+        ..Blob::ZERO
     };
     input.generation = 1;
     let mut out: OpenOut = blank_out();
@@ -223,10 +224,12 @@ fn get(p: &Plugin<Export>, path: &str) -> Value {
     input.method = AbiStr {
         ptr: b"GET".as_ptr(),
         len: 3,
+        ..AbiStr::ZERO
     };
     input.path = AbiStr {
         ptr: path.as_ptr(),
         len: path.len(),
+        ..AbiStr::ZERO
     };
     let mut out: ServeOut = blank_out();
     out.head = out_head();

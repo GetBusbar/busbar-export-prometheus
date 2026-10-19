@@ -127,18 +127,21 @@ fn blob(bytes: &[u8]) -> Blob {
         len: bytes.len(),
         fmt: BLOB_JSON,
         flags: 0,
+        ..Blob::ZERO
     }
 }
 
 const ABSENT: AbiStr = AbiStr {
     ptr: std::ptr::null(),
     len: 0,
+    ..AbiStr::ZERO
 };
 
 fn abi(s: &str) -> AbiStr {
     AbiStr {
         ptr: s.as_ptr(),
         len: s.len(),
+        ..AbiStr::ZERO
     }
 }
 
@@ -348,6 +351,7 @@ fn to_contract(exposition: &str) -> Vec<MetricFamily> {
                     value: s.value.clone(),
                 })
                 .collect(),
+            ..MetricFamily::ZERO
         })
         .collect()
 }

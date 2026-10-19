@@ -82,6 +82,7 @@ fn opened(d: &Arc<Dispatcher>, dropped: bool) -> Plugin<Export> {
         len: settings.len(),
         fmt: BLOB_JSON,
         flags: 0,
+        ..Blob::ZERO
     };
     input.generation = 1;
     let mut out: OpenOut = blank_out();
@@ -100,12 +101,14 @@ fn check(p: &Plugin<Export>, phase: u32, names: &[&str]) -> Vec<String> {
             name: AbiStr {
                 ptr: n.as_ptr(),
                 len: n.len(),
+                ..AbiStr::ZERO
             },
             settings: Blob {
                 ptr: settings.as_ptr(),
                 len: settings.len(),
                 fmt: BLOB_JSON,
                 flags: 0,
+                ..Blob::ZERO
             },
         })
         .collect();

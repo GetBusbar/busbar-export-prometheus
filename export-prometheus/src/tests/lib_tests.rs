@@ -74,6 +74,7 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
                 sample("busbar_request_duration_seconds_sum", &[], "0.05"),
                 sample("busbar_request_duration_seconds_count", &[], "4"),
             ],
+            ..MetricFamily::ZERO
         },
         MetricFamily {
             name: "busbar_requests_total".to_string(),
@@ -84,6 +85,7 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
                 &[("pool", "a\\\"b"), ("outcome", "ok")],
                 "3",
             )],
+            ..MetricFamily::ZERO
         },
     ];
     let body = render(&families);
@@ -212,6 +214,7 @@ fn snapshot_under(seed: u64) -> Vec<MetricFamily> {
             help: None,
             samples: series.into_iter().flatten().collect(),
             name,
+            ..MetricFamily::ZERO
         })
         .collect()
 }
@@ -287,6 +290,7 @@ fn a_gauge_renders_between_the_counters_and_the_histograms_whatever_its_name() {
                 .unwrap_or_default(),
             value: "1".to_string(),
         }],
+        ..MetricFamily::ZERO
     };
     let families = vec![
         fam(
@@ -331,12 +335,14 @@ fn hook_families_render_in_the_1_5_5_hook_layout() {
                 sample("zeta_total", "b", None, "2"),
                 sample("zeta_total", "a", None, "1"),
             ],
+            ..MetricFamily::ZERO
         },
         MetricFamily {
             name: "alpha_level".to_string(),
             kind: "gauge".to_string(),
             help: None,
             samples: vec![sample("alpha_level", "a", Some(("pool", "chat")), "0.5")],
+            ..MetricFamily::ZERO
         },
     ];
     assert_eq!(

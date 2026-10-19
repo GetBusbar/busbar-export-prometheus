@@ -8,6 +8,9 @@ rust-version = "1.97"
 description = "First-party signed kind:export plugin cdylib: the prometheus export sink (`module: prometheus`), packaged as a droppable busbar plugin. Drop the signed tarball into `plugins/` and name it from an `export.<name>.module: prometheus` block."
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [lib]
 # cdylib: the DROPPED-IN door, exporting `busbar_plugin_door` (a signed tarball in `plugins/`).
 # rlib: REQUIRED for `cargo test` to emit the cdylib artifact the conformance test loads (a

@@ -58,6 +58,7 @@ const fn abi(s: &'static str) -> AbiStr {
     AbiStr {
         ptr: s.as_ptr(),
         len: s.len(),
+        ..AbiStr::ZERO
     }
 }
 
@@ -73,6 +74,7 @@ const fn get(path: &'static str) -> Route {
         method: abi("GET"),
         auth: ROUTE_AUTH_KEY,
         _reserved: 0,
+        ..Route::ZERO
     }
 }
 
@@ -83,11 +85,13 @@ const TAIL: Tail = Tail {
     head: KindTailHead {
         size: std::mem::size_of::<Tail>() as u32,
         _reserved: 0,
+        ..KindTailHead::ZERO
     },
     streams: STREAMS.as_ptr(),
     streams_len: STREAMS.len(),
     routes: ROUTES.as_ptr(),
     routes_len: ROUTES.len(),
+    ..Tail::ZERO
 };
 
 /// This plugin's Statement: its name and version, the `metrics` stream and its two routes.
@@ -121,6 +125,7 @@ impl Prometheus {
             ticket: Ticket::NONE,
             seq: 0,
             _reserved: 0,
+            ..CompletionHandle::ZERO
         };
         let mut buf = vec![0u64; self.read_hint.load(Ordering::Relaxed).div_ceil(8)];
         let read = match services.snapshot_read(none, scope, &mut buf) {
@@ -154,6 +159,7 @@ fn lift(f: busbar_contract::export_calls::Family) -> MetricFamily {
                 value: s.value,
             })
             .collect(),
+        ..MetricFamily::ZERO
     }
 }
 
@@ -209,6 +215,7 @@ fn families(input: Lent<'_, ScrapeIn>) -> Vec<MetricFamily> {
                     value: text(s.field(|s| &s.value)).unwrap_or_default(),
                 })
                 .collect(),
+            ..MetricFamily::ZERO
         })
         .collect()
 }
