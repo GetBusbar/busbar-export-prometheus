@@ -351,7 +351,6 @@ fn to_contract(exposition: &str) -> Vec<MetricFamily> {
                     value: s.value.clone(),
                 })
                 .collect(),
-            ..MetricFamily::ZERO
         })
         .collect()
 }

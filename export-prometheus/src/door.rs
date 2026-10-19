@@ -159,7 +159,6 @@ fn lift(f: busbar_contract::export_calls::Family) -> MetricFamily {
                 value: s.value,
             })
             .collect(),
-        ..MetricFamily::ZERO
     }
 }
 
@@ -215,7 +214,6 @@ fn families(input: Lent<'_, ScrapeIn>) -> Vec<MetricFamily> {
                     value: text(s.field(|s| &s.value)).unwrap_or_default(),
                 })
                 .collect(),
-            ..MetricFamily::ZERO
         })
         .collect()
 }
