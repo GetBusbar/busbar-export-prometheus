@@ -12,12 +12,15 @@
 //! the recorder's order) and answers the exposition in 1.5.5's bytes and content types. A snapshot
 //! the host hands to `scrape` renders the same way into the host's buffer.
 //!
-//! One door, both ways in: [`door::door`] is the row a busbar build links, and the sibling
+//! One door, both ways in: [`door`] is the row a busbar build links, and the sibling
 //! `busbar-export-prometheus-plugin` cdylib exports the same door as its one symbol.
 
 #![deny(unsafe_code)]
 
-pub mod door;
+mod door;
+
+/// THE DOOR: this plugin's one public item (BUSBAR-1.6.0.md l.3567, Crate shape).
+pub use door::door;
 
 use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
 
@@ -54,7 +57,7 @@ fn render_exposition(families: &[MetricFamily]) -> String {
 /// host folded them in, kept stable by name), `# HELP` when present then `# TYPE`, each family's
 /// samples in the order handed (hooks by name, then each hook's own report order), and NO blank line
 /// between families. Every label value and number is written as the host spelled it.
-pub fn render_hooks(families: &[MetricFamily]) -> String {
+fn render_hooks(families: &[MetricFamily]) -> String {
     let mut ordered: Vec<&MetricFamily> = families.iter().collect();
     ordered.sort_by(|a, b| a.name.cmp(&b.name));
     let mut out = String::new();
@@ -82,7 +85,7 @@ pub fn render_hooks(families: &[MetricFamily]) -> String {
 /// THE LIMITS CHECK across every configured instance of this sink, in configuration order: the sink
 /// states the `one_instance` mark, so a second instance is refused in 1.5.5's words (shadow-oracle
 /// cell `boot.refusal__BOOT-102__validate`), once per extra instance, naming the first.
-pub fn check_limits(instances: &[String]) -> Vec<String> {
+fn check_limits(instances: &[String]) -> Vec<String> {
     let Some((first, rest)) = instances.split_first() else {
         return Vec::new();
     };
@@ -98,16 +101,11 @@ pub fn check_limits(instances: &[String]) -> Vec<String> {
 }
 
 /// The row's canonical name.
-pub const NAME: &str = "busbar-export-prometheus";
+const NAME: &str = "busbar-export-prometheus";
 
 /// The `module:` an operator writes — the name 1.5.5 spelled the built-in by — the row's alias on
 /// either door.
-pub const ALIAS: &str = "prometheus";
-
-/// What this sink DECLARES to the host (the manifest's `declares` section, `declares.json`, which
-/// `busbar-plugin-pack --declares-file` signs into the tarball): it reports no series, raises no
-/// code of its own and has no destination.
-pub const DECLARES: &str = include_str!("../declares.json");
+const ALIAS: &str = "prometheus";
 
 /// The `settings:` an operator writes for this sink — the same shape, field for field, the
 /// configuration grammar has frozen for it since 1.5.3, so a refusal reads exactly as it always has.
@@ -137,7 +135,7 @@ const ZERO_RETENTION: &str =
 ///
 /// # Errors
 /// The line, when the settings are refused.
-pub fn validate(settings: &[u8]) -> Result<(), String> {
+fn validate(settings: &[u8]) -> Result<(), String> {
     let parsed = serde_json::from_slice(settings)
         .and_then(serde_json::from_value::<PrometheusSettings>)
         .map_err(|e| format!("settings: {e}"))?;
@@ -150,7 +148,7 @@ pub fn validate(settings: &[u8]) -> Result<(), String> {
 /// The Prometheus text exposition of the snapshot: `# HELP`, `# TYPE`, the samples and the
 /// family-closing blank line, every label value and number exactly as the recorder wrote it — in
 /// the STABLE order [`canonical_order`] gives it.
-pub fn render(families: &[MetricFamily]) -> String {
+fn render(families: &[MetricFamily]) -> String {
     render_exposition(&canonical_order(families))
 }
 

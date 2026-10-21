@@ -90,7 +90,7 @@ fn cdylib() -> PathBuf {
 
 /// The row a busbar build that links the sink states.
 fn row() -> LinkedRow {
-    LinkedRow::of(busbar_export_prometheus::door::door).expect("the linked door renders")
+    LinkedRow::of(busbar_export_prometheus::door).expect("the linked door renders")
 }
 
 fn dispatcher() -> Arc<Dispatcher> {
@@ -447,7 +447,7 @@ fn a_manifest_stating_the_1_5_5_export_abi_is_refused() {
 // `conformance.json`, every step's crossings exactly at the script's pin, the two folds equal, and
 // the suite's RED arms kept.
 busbar_plugin_loader::conformance_suite! {
-    door: busbar_export_prometheus::door::door,
+    door: busbar_export_prometheus::door,
     cdylib: "busbar_export_prometheus_plugin",
     inputs: include_str!("conformance.json"),
 }

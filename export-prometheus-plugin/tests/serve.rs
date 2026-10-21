@@ -172,7 +172,7 @@ fn cdylib() -> PathBuf {
 }
 
 fn row() -> LinkedRow {
-    LinkedRow::of(busbar_export_prometheus::door::door).expect("the linked door renders")
+    LinkedRow::of(busbar_export_prometheus::door).expect("the linked door renders")
 }
 
 /// The door, linked or dropped in, opened on a dispatcher serving `host`.

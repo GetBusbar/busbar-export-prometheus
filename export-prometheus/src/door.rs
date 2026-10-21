@@ -40,15 +40,17 @@ use busbar_contract::abi::host::service::{SNAPSHOT_SCOPE_HOOKS, SNAPSHOT_SCOPE_W
 use busbar_contract::abi::mechanism::call::{
     AbiStr, InHead, OutHead, Outcome, BLOB_JSON, BLOB_OCTETS,
 };
-use busbar_contract::abi::mechanism::door::{KindTailHead, Statement, MARK_ONE_INSTANCE};
+use busbar_contract::abi::mechanism::door::{
+    KindTailHead, Rewrite, Statement, MARK_ONE_INSTANCE, REWRITE_ALIAS,
+};
 use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
-use busbar_contract::abi::sdk::door::statement;
+use busbar_contract::abi::sdk::door::{abi_str, statement};
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
 use busbar_contract::abi::sdk::{
     Instance, Lent, MetricFamily, MetricSample, Out, Safe, SafeSlot, ServiceError, Services,
 };
 
-use crate::NAME;
+use crate::{ALIAS, NAME};
 
 /// The one stream the sink carries.
 const STREAMS: &[u8] = &[ExportStream::Metrics as u8];
@@ -90,9 +92,33 @@ const TAIL: Tail = Tail {
     routes_len: ROUTES.len(),
 };
 
+/// The module name an operator writes, as the alias the registry holds beside [`NAME`].
+const REWRITES: &[Rewrite] = &[Rewrite {
+    class: REWRITE_ALIAS,
+    _reserved: 0,
+    from: abi_str(ALIAS),
+    to: AbiStr {
+        ptr: std::ptr::null(),
+        len: 0,
+    },
+}];
+
+busbar_contract::statement_extensions!(
+    /// The Statement's extensions: this plugin's whole `declares` document (BUSBAR-1.6.0.md l.246), which
+    /// `busbar-plugin-pack --declares-file` signs into the tarball: no series, no code of its own and
+    /// no destination.
+    EXTENSIONS: [(
+        busbar_contract::abi::mechanism::extensions::EXT_DECLARES,
+        include_bytes!("../declares.json"),
+    )]
+);
+
 /// This plugin's Statement: its name and version, the `metrics` stream and its two routes.
 pub const STATEMENT: Statement = Statement {
     kind_tail: (&TAIL as *const Tail).cast::<KindTailHead>(),
+    rewrites: REWRITES.as_ptr(),
+    rewrites_len: REWRITES.len(),
+    extensions: EXTENSIONS,
     // One scrape sink renders the ONE well-known `/metrics`: at most one instance.
     marks: MARK_ONE_INSTANCE,
     ..statement(NAME, env!("CARGO_PKG_VERSION"), 64)

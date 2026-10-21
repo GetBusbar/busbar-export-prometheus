@@ -109,7 +109,8 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
 /// The sink declares no series, no code and no destination.
 #[test]
 fn it_declares_no_series_code_or_destination() {
-    let stated: serde_json::Value = serde_json::from_str(DECLARES).expect("declares.json parses");
+    let stated: serde_json::Value =
+        serde_json::from_str(include_str!("../../declares.json")).expect("declares.json parses");
     for key in ["metrics", "diagnostics", "destinations"] {
         assert_eq!(stated.get(key), None, "declares states `{key}`");
     }
