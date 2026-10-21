@@ -128,7 +128,7 @@ impl Prometheus {
 /// One host family, as the renderer reads it.
 fn lift(f: busbar_contract::export_calls::Family) -> MetricFamily {
     MetricFamily {
-        kind: busbar_contract::export_calls::type_word(f.kind())
+        kind: busbar_contract::export_calls::type_word(f.kind)
             .unwrap_or("untyped")
             .to_string(),
         name: f.name,

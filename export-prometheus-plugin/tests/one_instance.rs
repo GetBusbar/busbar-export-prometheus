@@ -111,7 +111,7 @@ fn check(p: &Plugin<Export>, phase: u32, names: &[&str]) -> Vec<String> {
     let mut f = Frame::new(input, out);
     let called = p.call(export::slot::CHECK, &mut f);
     assert_eq!(format!("{:?}", called.outcome), "Ready");
-    if f.out.findings.ptr().is_null() || f.out.findings.len() == 0 {
+    if f.out.findings.ptr().is_null() || f.out.findings.is_empty() {
         return Vec::new();
     }
     // SAFETY: the plugin's own findings, live under its lease until released.
