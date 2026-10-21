@@ -109,7 +109,7 @@ busbar_contract::statement_extensions!(
     /// no destination.
     EXTENSIONS: [(
         busbar_contract::abi::mechanism::extensions::EXT_DECLARES,
-        include_bytes!("../declares.json"),
+        include_bytes!("../declares.json")
     )]
 );
 
