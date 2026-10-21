@@ -270,6 +270,8 @@ fn scrape(p: &Plugin<Export>, families: &[MetricFamily], cap: usize) -> Value {
     let first = p.call(export::slot::SCRAPE, &mut frame);
     let (written, needed) = (frame.out.written, frame.out.needed);
     let text = String::from_utf8_lossy(&buf[..written.min(cap)]).into_owned();
+    // The export ABI: a `cap` too small means the plugin writes NOTHING (abi/export/mod.rs).
+    let untouched = buf.iter().all(|b| *b == 0);
     let answer = spelled(&first);
     let recalled = first.recall.map(|token| {
         let mut bigger = vec![0u8; needed];
@@ -283,6 +285,7 @@ fn scrape(p: &Plugin<Export>, families: &[MetricFamily], cap: usize) -> Value {
         "written": written,
         "needed": needed,
         "text": text,
+        "untouched": untouched,
         "recall": recalled,
     })
 }
@@ -383,7 +386,7 @@ fn the_linked_and_the_dropped_in_prometheus_sink_are_one_sink() {
     );
     assert_eq!(
         linked["scrape"],
-        json!({"answer": "Ready ", "written": OWN.len(), "needed": 0, "text": OWN, "recall": null}),
+        json!({"answer": "Ready ", "written": OWN.len(), "needed": 0, "text": OWN, "untouched": false, "recall": null}),
         "the scrape is the recorder's bytes, back"
     );
     assert_eq!(
@@ -393,14 +396,14 @@ fn the_linked_and_the_dropped_in_prometheus_sink_are_one_sink() {
     assert_eq!(
         linked["scrape_short"],
         json!({
-            "answer": "Failed ", "written": 0, "needed": OWN.len(), "text": "",
+            "answer": "Failed ", "written": 0, "needed": OWN.len(), "text": "", "untouched": true,
             "recall": ["Ready ", OWN],
         }),
         "a short buffer is answered with the bytes needed, then rendered on the one re-call"
     );
     assert_eq!(
         linked["scrape_empty"],
-        json!({"answer": "Ready ", "written": 0, "needed": 0, "text": "", "recall": null}),
+        json!({"answer": "Ready ", "written": 0, "needed": 0, "text": "", "untouched": true, "recall": null}),
         "an empty recorder renders nothing"
     );
     assert_eq!(linked["close"], "Ready ");
