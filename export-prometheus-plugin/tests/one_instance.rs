@@ -19,7 +19,7 @@ use std::sync::Arc;
 use busbar_contract::abi::export::{
     self, CheckIn, CheckInstance, CheckOut, CHECK_PHASE_INSTANCES, CHECK_PHASE_LIMITS,
 };
-use busbar_contract::abi::mechanism::call::{AbiStr, Blob, BLOB_JSON};
+use busbar_contract::abi::mechanism::call::{AbiStr, Blob};
 use busbar_contract::abi::mechanism::lifecycle::{slot as lc, OpenIn, OpenOut};
 use busbar_contract::abi::sdk::door::{blank_in, blank_out};
 use busbar_plugin_loader::dispatch::kinds::export::{Export, ExportFacts};
@@ -56,8 +56,15 @@ fn cdylib() -> PathBuf {
         })
 }
 
+/// This crate's own door, as the loader names a compiled-in one.
+#[allow(unused_unsafe)]
+fn loaded() -> busbar_plugin_loader::dispatch::LoadedDoor {
+    // SAFETY: `door` is this crate's own `plugin_door!` entry.
+    unsafe { busbar_plugin_loader::dispatch::LoadedDoor::from_raw(busbar_export_prometheus::door) }
+}
+
 fn row() -> LinkedRow {
-    LinkedRow::of(busbar_export_prometheus::door::door).expect("the linked door renders")
+    LinkedRow::of_loaded(loaded()).expect("the linked door renders")
 }
 
 /// The door, linked or dropped in, opened on its settings.
@@ -77,12 +84,7 @@ fn opened(d: &Arc<Dispatcher>, dropped: bool) -> Plugin<Export> {
     let settings = br#"{"buffer_seconds":60}"#;
     let mut input: OpenIn = blank_in();
     input.head = in_head();
-    input.settings = Blob {
-        ptr: settings.as_ptr(),
-        len: settings.len(),
-        fmt: BLOB_JSON,
-        flags: 0,
-    };
+    input.settings = Blob::json(settings);
     input.generation = 1;
     let mut out: OpenOut = blank_out();
     out.head = out_head();
@@ -92,21 +94,15 @@ fn opened(d: &Arc<Dispatcher>, dropped: bool) -> Plugin<Export> {
 }
 
 /// `check` at `phase` over the instances `names` (each with the same settings): the findings.
+#[allow(unused_unsafe)]
 fn check(p: &Plugin<Export>, phase: u32, names: &[&str]) -> Vec<String> {
     let settings = br#"{"buffer_seconds":60}"#;
     let instances: Vec<CheckInstance> = names
         .iter()
         .map(|n| CheckInstance {
-            name: AbiStr {
-                ptr: n.as_ptr(),
-                len: n.len(),
-            },
-            settings: Blob {
-                ptr: settings.as_ptr(),
-                len: settings.len(),
-                fmt: BLOB_JSON,
-                flags: 0,
-            },
+            // SAFETY: `names` outlives `instances`, which the call below reads and drops.
+            name: unsafe { AbiStr::from_raw_parts(n.as_ptr(), n.len()) },
+            settings: Blob::json(settings),
         })
         .collect();
     let mut input: CheckIn = blank_in();
@@ -121,11 +117,11 @@ fn check(p: &Plugin<Export>, phase: u32, names: &[&str]) -> Vec<String> {
     let mut f = Frame::new(input, out);
     let called = p.call(export::slot::CHECK, &mut f);
     assert_eq!(format!("{:?}", called.outcome), "Ready");
-    if f.out.findings.ptr.is_null() || f.out.findings.len == 0 {
+    if f.out.findings.ptr().is_null() || f.out.findings.is_empty() {
         return Vec::new();
     }
     // SAFETY: the plugin's own findings, live under its lease until released.
-    let bytes = unsafe { std::slice::from_raw_parts(f.out.findings.ptr, f.out.findings.len) };
+    let bytes = unsafe { std::slice::from_raw_parts(f.out.findings.ptr(), f.out.findings.len()) };
     serde_json::from_slice(bytes).expect("findings are a JSON list of lines")
 }
 

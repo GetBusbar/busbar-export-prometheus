@@ -40,25 +40,22 @@ use busbar_contract::abi::host::service::{SNAPSHOT_SCOPE_HOOKS, SNAPSHOT_SCOPE_W
 use busbar_contract::abi::mechanism::call::{
     AbiStr, InHead, OutHead, Outcome, BLOB_JSON, BLOB_OCTETS,
 };
-use busbar_contract::abi::mechanism::door::{KindTailHead, Statement, MARK_ONE_INSTANCE};
+use busbar_contract::abi::mechanism::door::{Rewrite, Statement, MARK_ONE_INSTANCE, REWRITE_ALIAS};
 use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
-use busbar_contract::abi::sdk::door::statement;
+use busbar_contract::abi::sdk::door::{abi_str, statement};
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
 use busbar_contract::abi::sdk::{
     Instance, Lent, MetricFamily, MetricSample, Out, Safe, SafeSlot, ServiceError, Services,
 };
 
-use crate::NAME;
+use crate::{ALIAS, NAME};
 
 /// The one stream the sink carries.
 const STREAMS: &[u8] = &[ExportStream::Metrics as u8];
 
 /// A `'static` string as the ABI names it.
 const fn abi(s: &'static str) -> AbiStr {
-    AbiStr {
-        ptr: s.as_ptr(),
-        len: s.len(),
-    }
+    AbiStr::of(s)
 }
 
 /// The well-known exposition path.
@@ -79,23 +76,35 @@ const fn get(path: &'static str) -> Route {
 /// The sink's own routes: the two well-known expositions, 1.5.5's paths behind the data key.
 const ROUTES: &[Route] = &[get(METRICS), get(METRICS_HOOKS)];
 
-const TAIL: Tail = Tail {
-    head: KindTailHead {
-        size: std::mem::size_of::<Tail>() as u32,
-        _reserved: 0,
-    },
-    streams: STREAMS.as_ptr(),
-    streams_len: STREAMS.len(),
-    routes: ROUTES.as_ptr(),
-    routes_len: ROUTES.len(),
-};
+const TAIL: Tail = Tail::EMPTY.with_streams(STREAMS).with_routes(ROUTES);
+
+/// The module name an operator writes, as the alias the registry holds beside [`NAME`].
+const REWRITES: &[Rewrite] = &[Rewrite {
+    class: REWRITE_ALIAS,
+    _reserved: 0,
+    from: abi_str(ALIAS),
+    to: AbiStr::ABSENT,
+}];
+
+busbar_contract::statement_extensions!(
+    /// The Statement's extensions: this plugin's whole `declares` document (BUSBAR-1.6.0.md l.246), which
+    /// `busbar-plugin-pack --declares-file` signs into the tarball: no series, no code of its own and
+    /// no destination.
+    EXTENSIONS: [(
+        busbar_contract::abi::mechanism::extensions::EXT_DECLARES,
+        include_bytes!("../declares.json")
+    )]
+);
 
 /// This plugin's Statement: its name and version, the `metrics` stream and its two routes.
-pub const STATEMENT: Statement = Statement {
-    kind_tail: (&TAIL as *const Tail).cast::<KindTailHead>(),
+pub const STATEMENT: Statement = {
+    let mut s = statement(NAME, env!("CARGO_PKG_VERSION"), 64)
+        .with_rewrites(REWRITES)
+        .with_kind_tail(&TAIL);
+    s.extensions = EXTENSIONS;
     // One scrape sink renders the ONE well-known `/metrics`: at most one instance.
-    marks: MARK_ONE_INSTANCE,
-    ..statement(NAME, env!("CARGO_PKG_VERSION"), 64)
+    s.marks = MARK_ONE_INSTANCE;
+    s
 };
 
 /// The buffer the first snapshot read starts with.
@@ -177,7 +186,7 @@ impl Life for Prometheus {
 
 /// The text `s` names, through the SDK's safe lend; `None` when it is absent (a NULL string).
 fn text(s: Lent<'_, AbiStr>) -> Option<String> {
-    (!s.ptr.is_null()).then(|| String::from_utf8_lossy(s.bytes()).into_owned())
+    (!s.is_absent()).then(|| String::from_utf8_lossy(s.bytes()).into_owned())
 }
 
 /// The snapshot `input` lends, in the order the host gave it, read through the SDK's accessors.
@@ -186,27 +195,27 @@ fn families(input: Lent<'_, ScrapeIn>) -> Vec<MetricFamily> {
         .families()
         .iter()
         .map(|f| MetricFamily {
-            name: text(f.field(|f| &f.name)).unwrap_or_default(),
-            kind: busbar_contract::export_calls::type_word(f.kind)
+            name: text(f.name()).unwrap_or_default(),
+            kind: busbar_contract::export_calls::type_word(f.kind())
                 .unwrap_or("untyped")
                 .to_string(),
-            help: text(f.field(|f| &f.help)),
+            help: text(f.help()),
             samples: f
                 .samples()
                 .iter()
                 .map(|s| MetricSample {
-                    name: text(s.field(|s| &s.name)).unwrap_or_default(),
+                    name: text(s.name()).unwrap_or_default(),
                     labels: s
                         .labels()
                         .iter()
                         .map(|l| {
                             (
-                                text(l.field(|l| &l.key)).unwrap_or_default(),
-                                text(l.field(|l| &l.value)).unwrap_or_default(),
+                                text(l.key()).unwrap_or_default(),
+                                text(l.value()).unwrap_or_default(),
                             )
                         })
                         .collect(),
-                    value: text(s.field(|s| &s.value)).unwrap_or_default(),
+                    value: text(s.value()).unwrap_or_default(),
                 })
                 .collect(),
         })
@@ -226,7 +235,7 @@ impl SafeSlot for Scrape {
         mut out: Out<'_, ScrapeOut>,
     ) -> Outcome {
         let families = families(input);
-        let body = if input.head.flags & SCRAPE_FLAG_HOOK_FAMILIES != 0 {
+        let body = if input.head().flags() & SCRAPE_FLAG_HOOK_FAMILIES != 0 {
             crate::render_hooks(&families)
         } else {
             crate::render(&families)
@@ -290,13 +299,13 @@ impl SafeSlot for Check {
         let Some(h) = instance.get() else {
             return Outcome::Refused;
         };
-        if input.phase != CHECK_PHASE_LIMITS {
+        if input.phase() != CHECK_PHASE_LIMITS {
             return Outcome::Ready;
         }
         let names: Vec<String> = input
             .instances()
             .iter()
-            .map(|c| text(c.field(|c| &c.name)).unwrap_or_default())
+            .map(|c| text(c.name()).unwrap_or_default())
             .collect();
         let lines = crate::check_limits(&names);
         if !lines.is_empty() {
@@ -337,7 +346,7 @@ impl SafeSlot for Serve {
         let Some(h) = instance.get() else {
             return Outcome::Refused;
         };
-        let (scope, headers, render): Exposition = match input.field(|i| &i.path).as_str() {
+        let (scope, headers, render): Exposition = match input.path().as_str() {
             Ok(METRICS) => (SNAPSHOT_SCOPE_WHOLE, METRICS_HEADERS, crate::render),
             Ok(METRICS_HOOKS) => (SNAPSHOT_SCOPE_HOOKS, HOOKS_HEADERS, crate::render_hooks),
             _ => return Outcome::Refused,
@@ -378,4 +387,4 @@ mod table {
 }
 
 /// This plugin's door: the one a compiled-in build links and the dropped-in image exports.
-pub use table::{door, MACRO_DOOR};
+pub use table::door;

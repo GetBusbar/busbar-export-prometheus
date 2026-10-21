@@ -88,9 +88,16 @@ fn cdylib() -> PathBuf {
         })
 }
 
+/// This crate's own door, as the loader names a compiled-in one.
+#[allow(unused_unsafe)]
+fn loaded() -> busbar_plugin_loader::dispatch::LoadedDoor {
+    // SAFETY: `door` is this crate's own `plugin_door!` entry.
+    unsafe { busbar_plugin_loader::dispatch::LoadedDoor::from_raw(busbar_export_prometheus::door) }
+}
+
 /// The row a busbar build that links the sink states.
 fn row() -> LinkedRow {
-    LinkedRow::of(busbar_export_prometheus::door::door).expect("the linked door renders")
+    LinkedRow::of_loaded(loaded()).expect("the linked door renders")
 }
 
 fn dispatcher() -> Arc<Dispatcher> {
@@ -122,23 +129,20 @@ fn load(d: &Dispatcher, dropped: bool) -> Plugin<Export> {
 }
 
 fn blob(bytes: &[u8]) -> Blob {
-    Blob {
-        ptr: bytes.as_ptr(),
-        len: bytes.len(),
-        fmt: BLOB_JSON,
-        flags: 0,
+    // SAFETY: test-owned bytes the caller keeps alive for the call that reads the blob.
+    #[allow(unused_unsafe)]
+    unsafe {
+        Blob::from_raw_parts(bytes.as_ptr(), bytes.len(), BLOB_JSON, 0)
     }
 }
 
-const ABSENT: AbiStr = AbiStr {
-    ptr: std::ptr::null(),
-    len: 0,
-};
+const ABSENT: AbiStr = AbiStr::ABSENT;
 
 fn abi(s: &str) -> AbiStr {
-    AbiStr {
-        ptr: s.as_ptr(),
-        len: s.len(),
+    // SAFETY: test-owned text the caller keeps alive for the call that reads the string.
+    #[allow(unused_unsafe)]
+    unsafe {
+        AbiStr::from_raw_parts(s.as_ptr(), s.len())
     }
 }
 
@@ -447,7 +451,7 @@ fn a_manifest_stating_the_1_5_5_export_abi_is_refused() {
 // `conformance.json`, every step's crossings exactly at the script's pin, the two folds equal, and
 // the suite's RED arms kept.
 busbar_plugin_loader::conformance_suite! {
-    door: busbar_export_prometheus::door::door,
+    loaded: loaded(),
     cdylib: "busbar_export_prometheus_plugin",
     inputs: include_str!("conformance.json"),
 }
