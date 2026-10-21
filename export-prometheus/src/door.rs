@@ -232,14 +232,14 @@ impl SafeSlot for Scrape {
             crate::render(&families)
         };
         let mut buf = input.buf();
-        buf.extend(body.as_bytes());
-        if buf.fits() {
-            out.set(|o| &o.written, buf.written());
-            Outcome::Ready
-        } else {
-            out.set(|o| &o.needed, buf.needed());
-            Outcome::Failed
+        // The export ABI: a `cap` too small means the plugin writes nothing and sets `needed`.
+        if body.len() > buf.cap() {
+            out.set(|o| &o.needed, body.len());
+            return Outcome::Failed;
         }
+        buf.extend(body.as_bytes());
+        out.set(|o| &o.written, buf.written());
+        Outcome::Ready
     }
 }
 
