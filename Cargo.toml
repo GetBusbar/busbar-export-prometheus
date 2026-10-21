@@ -35,8 +35,8 @@ repository = "https://github.com/GetBusbar/busbar-export-prometheus"
 needless_update = "allow"
 
 [workspace.dependencies]
-busbar-contract = { git = "https://github.com/GetBusbar/busbar", rev = "1b09a4a79a962112c8ef8036e2df50a7221daf5e" }
-busbar-plugin-loader = { git = "https://github.com/GetBusbar/busbar", rev = "1b09a4a79a962112c8ef8036e2df50a7221daf5e" }
+busbar-contract = { git = "https://github.com/GetBusbar/busbar", rev = "59fbf4f99203652652ebde869c9dbe232af0e967" }
+busbar-plugin-loader = { git = "https://github.com/GetBusbar/busbar", rev = "59fbf4f99203652652ebde869c9dbe232af0e967" }
 # busbar's root [workspace.dependencies], third-party rows, at 1b09a4a79a962112c8ef8036e2df50a7221daf5e
 arc-swap = "1"
 async-trait = "0.1"
