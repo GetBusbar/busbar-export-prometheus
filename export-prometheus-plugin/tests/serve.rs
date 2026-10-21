@@ -171,8 +171,15 @@ fn cdylib() -> PathBuf {
         })
 }
 
+/// This crate's own door, as the loader names a compiled-in one.
+#[allow(unused_unsafe)]
+fn loaded() -> busbar_plugin_loader::dispatch::LoadedDoor {
+    // SAFETY: `door` is this crate's own `plugin_door!` entry.
+    unsafe { busbar_plugin_loader::dispatch::LoadedDoor::from_raw(busbar_export_prometheus::door) }
+}
+
 fn row() -> LinkedRow {
-    LinkedRow::of(busbar_export_prometheus::door).expect("the linked door renders")
+    LinkedRow::of_loaded(loaded()).expect("the linked door renders")
 }
 
 /// The door, linked or dropped in, opened on a dispatcher serving `host`.
@@ -193,12 +200,7 @@ fn opened(host: Arc<Host>, dropped: bool) -> (Arc<Dispatcher>, Plugin<Export>) {
     let settings = br#"{"buffer_seconds":60}"#;
     let mut input: OpenIn = blank_in();
     input.head = in_head();
-    input.settings = Blob {
-        ptr: settings.as_ptr(),
-        len: settings.len(),
-        fmt: busbar_contract::abi::mechanism::call::BLOB_JSON,
-        flags: 0,
-    };
+    input.settings = Blob::json(settings);
     input.generation = 1;
     let mut out: OpenOut = blank_out();
     out.head = out_head();
@@ -217,17 +219,11 @@ fn copy(ptr: *const u8, len: usize) -> String {
 }
 
 /// `GET path` through `serve`: the outcome, status, headers and body.
-fn get(p: &Plugin<Export>, path: &str) -> Value {
+fn get(p: &Plugin<Export>, path: &'static str) -> Value {
     let mut input: ServeIn = blank_in();
     input.head = in_head();
-    input.method = AbiStr {
-        ptr: b"GET".as_ptr(),
-        len: 3,
-    };
-    input.path = AbiStr {
-        ptr: path.as_ptr(),
-        len: path.len(),
-    };
+    input.method = AbiStr::of_bytes(b"GET");
+    input.path = AbiStr::of(path);
     let mut out: ServeOut = blank_out();
     out.head = out_head();
     let mut f = Frame::new(input, out);
@@ -238,14 +234,14 @@ fn get(p: &Plugin<Export>, path: &str) -> Value {
         // SAFETY: the plugin's own header list, live under its lease.
         unsafe { std::slice::from_raw_parts(f.out.headers_out, f.out.headers_out_len) }
             .iter()
-            .map(|s| copy(s.ptr, s.len))
+            .map(|s| copy(s.ptr(), s.len()))
             .collect()
     };
     json!({
         "outcome": format!("{:?}", called.outcome),
         "status": f.out.status_code,
         "headers": headers,
-        "body": copy(f.out.body.ptr, f.out.body.len),
+        "body": copy(f.out.body.ptr(), f.out.body.len()),
     })
 }
 
