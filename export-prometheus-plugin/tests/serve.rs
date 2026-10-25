@@ -62,6 +62,8 @@ struct Host {
     declined: Mutex<bool>,
     /// No hook reports a metric: the hook families are empty.
     no_hooks: Mutex<bool>,
+    /// When set, the exposition the whole snapshot (scope 0) holds instead of `OWN`.
+    whole: Mutex<Option<String>>,
 }
 
 fn families(text: &str) -> Vec<Family> {
@@ -78,6 +80,11 @@ impl HostServices for Host {
         }
         if scope != 0 && *self.no_hooks.lock().unwrap() {
             return Snapshot::Families(Vec::new());
+        }
+        if scope == 0 {
+            if let Some(text) = self.whole.lock().unwrap().as_deref() {
+                return Snapshot::Families(families(text));
+            }
         }
         Snapshot::Families(families(if scope == 0 { OWN } else { HOOKS }))
     }
@@ -344,4 +351,40 @@ fn the_sink_serves_its_own_routes_from_the_host_snapshot_through_both_doors() {
         linked["declined_error"], "the host declined the snapshot read",
         "a failure names its cause, so the operator's 502 is not bare"
     );
+}
+
+/// One counter family of `n` labelled samples, in the sink's stable order.
+fn big_exposition(n: usize) -> String {
+    let mut text = String::from("# TYPE busbar_big_total counter\n");
+    for i in 0..n {
+        text.push_str(&format!(
+            "busbar_big_total{{pool=\"pool-{i:06}\",outcome=\"ok\"}} {i}\n"
+        ));
+    }
+    text.push('\n');
+    text
+}
+
+/// A snapshot larger than the 64 KiB first read buffer: the host answers `Short` with its size,
+/// the door re-calls once with headroom and serves the whole body; the second read starts from the
+/// stored hint. RED when the `Short` arm is gone: a real recorder snapshot over 64 KiB made
+/// `GET /metrics` FAILED (the host answers `502`).
+#[test]
+fn a_snapshot_larger_than_the_first_read_buffer_is_served_whole_through_both_doors() {
+    let big = big_exposition(3000);
+    assert!(big.len() > 100 * 1024, "the fixture must exceed 64 KiB");
+    for dropped in [false, true] {
+        let host = Arc::new(Host::default());
+        *host.ready.lock().unwrap() = true;
+        *host.whole.lock().unwrap() = Some(big.clone());
+        let (_d, p) = opened(host, dropped);
+        for read in ["first", "second, from the stored hint"] {
+            assert_eq!(
+                get(&p, "/metrics"),
+                json!({"outcome": "Ready", "status": 200,
+                       "headers": ["content-type", "text/plain; version=0.0.4"], "body": big}),
+                "dropped={dropped}, {read} read"
+            );
+        }
+    }
 }
