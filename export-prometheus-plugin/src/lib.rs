@@ -6,8 +6,8 @@
 //! door (`busbar_export_prometheus::door::door`) exported as this image's ONE symbol,
 //! `busbar_plugin_door` (`export_door!`, THE DESIGN §11.4). The logic crate exports nothing, so a
 //! build that links it carries no door symbol. Pack it with `busbar-plugin-pack --kind export
-//! --alias prometheus --declares-file export-prometheus/declares.json` (it declares only its
-//! contract-ABI range).
+//! --alias prometheus --declares-file export-prometheus/declares.json` (it declares nothing: no
+//! series, no code of its own, no destination).
 //!
 //! The export macro's `#[unsafe(no_mangle)]` is the one reviewed exemption here.
 #![deny(unsafe_code)]

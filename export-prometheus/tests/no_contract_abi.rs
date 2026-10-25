@@ -10,8 +10,13 @@
 
 #[test]
 fn no_source_file_names_the_contract_abi_range() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut stack = vec![src];
+    // Both crates: the logic crate's src and the sibling plugin crate's, whose header once told the
+    // packer's reader the superseded range.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut stack = vec![
+        root.join("src"),
+        root.join("../export-prometheus-plugin/src"),
+    ];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).expect("src reads") {
             let path = entry.expect("an entry").path();
