@@ -19,7 +19,7 @@
 //!
 //! THE RED ARMS, same file: before the recorder is installed the answer is `503` with
 //! `Retry-After: 1` and no body (never an empty success); a read the host declines is FAILED (the
-//! host answers `502`); a path the sink does not own is REFUSED.
+//! host answers `502`); a path the sink does not own is REFUSED; both answers name their cause in the error text.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -218,6 +218,11 @@ fn copy(ptr: *const u8, len: usize) -> String {
 
 /// `GET path` through `serve`: the outcome, status, headers and body.
 fn get(p: &Plugin<Export>, path: &str) -> Value {
+    serve(p, path).0
+}
+
+/// `GET path` through `serve`: the transcript, and the error text the answer named, if any.
+fn serve(p: &Plugin<Export>, path: &str) -> (Value, Option<String>) {
     let mut input: ServeIn = blank_in();
     input.head = in_head();
     input.method = AbiStr {
@@ -241,12 +246,19 @@ fn get(p: &Plugin<Export>, path: &str) -> Value {
             .map(|s| copy(s.ptr, s.len))
             .collect()
     };
-    json!({
-        "outcome": format!("{:?}", called.outcome),
-        "status": f.out.status_code,
-        "headers": headers,
-        "body": copy(f.out.body.ptr, f.out.body.len),
-    })
+    let error = called
+        .error
+        .as_ref()
+        .map(|e| String::from_utf8_lossy(e).into_owned());
+    (
+        json!({
+            "outcome": format!("{:?}", called.outcome),
+            "status": f.out.status_code,
+            "headers": headers,
+            "body": copy(f.out.body.ptr, f.out.body.len),
+        }),
+        error,
+    )
 }
 
 /// One door's script.
@@ -266,17 +278,19 @@ fn transcript(dropped: bool) -> Value {
     let hooks = get(&p, "/metrics/hooks");
     *host.no_hooks.lock().unwrap() = true;
     let hooks_empty = get(&p, "/metrics/hooks");
-    let elsewhere = get(&p, "/exports/metrics/x");
+    let elsewhere = serve(&p, "/exports/metrics/x");
     *host.declined.lock().unwrap() = true;
-    let declined = get(&p, "/metrics");
+    let declined = serve(&p, "/metrics");
     json!({
         "routes": routes,
         "not_ready": not_ready,
         "metrics": metrics,
         "hooks": hooks,
         "hooks_empty": hooks_empty,
-        "elsewhere": elsewhere["outcome"],
-        "declined": declined["outcome"],
+        "elsewhere": elsewhere.0["outcome"],
+        "elsewhere_error": elsewhere.1,
+        "declined": declined.0["outcome"],
+        "declined_error": declined.1,
     })
 }
 
@@ -320,5 +334,14 @@ fn the_sink_serves_its_own_routes_from_the_host_snapshot_through_both_doors() {
     assert_eq!(
         linked["declined"], "Failed",
         "a declined read: the host answers 502"
+    );
+    assert_eq!(
+        linked["elsewhere_error"],
+        "not a route this sink serves (only GET /metrics and /metrics/hooks)",
+        "a refusal names its cause"
+    );
+    assert_eq!(
+        linked["declined_error"], "the host declined the snapshot read",
+        "a failure names its cause, so the operator's 502 is not bare"
     );
 }
