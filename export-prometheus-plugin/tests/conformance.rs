@@ -382,7 +382,8 @@ fn the_linked_and_the_dropped_in_prometheus_sink_are_one_sink() {
     assert_eq!(linked["open"], "Ready ");
     assert_eq!(
         linked["answers"],
-        json!({"deliver": "Ready ", "status": "Ready ", "check": "Ready ", "serve": "Refused "})
+        json!({"deliver": "Ready ", "status": "Ready ", "check": "Ready ",
+               "serve": "Refused not a route this sink serves (only GET /metrics and /metrics/hooks)"})
     );
     assert_eq!(
         linked["scrape"],
