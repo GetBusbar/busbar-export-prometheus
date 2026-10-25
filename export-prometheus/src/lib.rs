@@ -15,7 +15,7 @@
 //! One door, both ways in: [`door::door`] is the row a busbar build links, and the sibling
 //! `busbar-export-prometheus-plugin` cdylib exports the same door as its one symbol.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod door;
 
@@ -134,10 +134,13 @@ const ZERO_RETENTION: &str =
 /// The settings refusal, as one complete line: a malformed bag is `settings: <serde's words>`; a
 /// zero retention window asks the recorder to keep nothing while still paying to record it, which
 /// is refused rather than served inert (omitting the instance is how collection is turned off).
+/// Empty settings read as `{}` (the SDK's `settings_object` rule, as every export sibling reads
+/// them), so they are refused for the missing `buffer_seconds`.
 ///
 /// # Errors
 /// The line, when the settings are refused.
 pub fn validate(settings: &[u8]) -> Result<(), String> {
+    let settings: &[u8] = if settings.is_empty() { b"{}" } else { settings };
     let parsed = serde_json::from_slice(settings)
         .and_then(serde_json::from_value::<PrometheusSettings>)
         .map_err(|e| format!("settings: {e}"))?;

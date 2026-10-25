@@ -6,8 +6,9 @@
 //! [`SafeSlot`].
 //!
 //! * `validate` — [`crate::validate`]: the configuration's words, the zero-retention refusal included.
-//! * `open` / `refresh` — nothing to hold but the size the last snapshot took (the buffer the next
-//!   read starts with).
+//! * `open` / `refresh` — settings `validate` refuses are refused in its words (a refused refresh
+//!   leaves the instance as it was); nothing to hold but the size the last snapshot took (the
+//!   buffer the next read starts with).
 //! * `serve` — THE SINK'S OWN ROUTES (`BUSBAR-1.6.0.md` Appendix A B.5, l.3829: "`/metrics` and
 //!   `/metrics/hooks` are the scrape sink's own listener needs: declared in its `routes` list,
 //!   served on the data listener behind the data key, and answered by its `serve`"; §5
@@ -164,13 +165,18 @@ impl Life for Prometheus {
         crate::validate(settings).map_err(Refusal::failed)
     }
 
-    fn open(_: &[u8], _: &[&[u8]], _: u64) -> Result<Self, Refusal> {
+    /// Refuses settings `validate` refuses, in its words: an instance never opens on settings the
+    /// configuration would refuse.
+    fn open(settings: &[u8], _: &[&[u8]], _: u64) -> Result<Self, Refusal> {
+        crate::validate(settings).map_err(Refusal::failed)?;
         Ok(Self {
             read_hint: AtomicUsize::new(FIRST_READ),
         })
     }
 
-    fn refresh(&self, _: &[u8], _: &[&[u8]], _: u64) -> Result<Refreshed, Refusal> {
+    /// Refuses settings `validate` refuses, in its words; the instance stays as it was.
+    fn refresh(&self, settings: &[u8], _: &[&[u8]], _: u64) -> Result<Refreshed, Refusal> {
+        crate::validate(settings).map_err(Refusal::failed)?;
         Ok(Refreshed::default())
     }
 }

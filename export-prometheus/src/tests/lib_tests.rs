@@ -381,3 +381,36 @@ fn the_statement_marks_one_instance() {
         busbar_contract::abi::mechanism::door::MARK_ONE_INSTANCE
     );
 }
+
+// ── SIBLING ALIGNMENT (export kind) ─────────────────────────────────────────────────────────────
+
+/// RED before: empty settings were refused as JSON that ended early ("EOF while parsing"), not for
+/// the missing `buffer_seconds` — the SDK reads empty settings as `{}`, as every export sibling does.
+#[test]
+fn empty_settings_are_refused_for_the_missing_buffer_seconds() {
+    assert_eq!(
+        validate(b"").expect_err("refused"),
+        "settings: missing field `buffer_seconds`"
+    );
+}
+
+/// RED before: `open` and `refresh` ignored their settings, so an instance opened (or reloaded) on
+/// settings the configuration refuses — a zero retention window, an unknown key — without a word.
+/// Both now refuse in `validate`'s words, as every export sibling does.
+#[test]
+fn open_and_refresh_refuse_what_validate_refuses() {
+    use crate::door::Prometheus;
+    use busbar_contract::abi::sdk::life::Life;
+    for bad in [
+        &br#"{"buffer_seconds":0}"#[..],
+        br#"{"buffer_seconds":60,"x":1}"#,
+        b"not json",
+    ] {
+        let want = validate(bad).expect_err("validate refuses");
+        let opened = Prometheus::open(bad, &[], 1).expect_err("open refuses");
+        assert_eq!(opened.text(), Some(want.as_str()));
+        let p = Prometheus::open(br#"{"buffer_seconds":60}"#, &[], 1).expect("opens");
+        let refreshed = p.refresh(bad, &[], 2).expect_err("refresh refuses");
+        assert_eq!(refreshed.text(), Some(want.as_str()));
+    }
+}
