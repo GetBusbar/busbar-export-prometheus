@@ -275,6 +275,18 @@ impl SafeSlot for Status {
     }
 }
 
+/// The error texts of `serve` and `check`'s FAILED and REFUSED answers: one per cause, so the
+/// host's warn names why instead of a bare outcome.
+const NO_INSTANCE: &str = "no opened prometheus instance";
+const NOT_A_ROUTE: &str = "not a route this sink serves (only GET /metrics and /metrics/hooks)";
+const NO_SERVICES: &str =
+    "the host offers this sink no services: the exposition cannot read the snapshot";
+const READ_UNSERVED: &str =
+    "the host serves no snapshot.read: the exposition cannot read the snapshot";
+const READ_DECLINED: &str = "the host declined the snapshot read";
+const READ_BROKEN: &str = "the host's snapshot broke the service's rules";
+const READ_SHORT: &str = "the snapshot outgrew the buffer on the one re-call";
+
 /// `check`: at the limits phase, a second instance refused in 1.5.5's words.
 pub struct Check;
 
@@ -288,6 +300,7 @@ impl SafeSlot for Check {
         mut out: Out<'_, CheckOut>,
     ) -> Outcome {
         let Some(h) = instance.get() else {
+            out.error(NO_INSTANCE);
             return Outcome::Refused;
         };
         if input.phase != CHECK_PHASE_LIMITS {
@@ -335,20 +348,33 @@ impl SafeSlot for Serve {
         mut out: Out<'_, ServeOut>,
     ) -> Outcome {
         let Some(h) = instance.get() else {
+            out.error(NO_INSTANCE);
             return Outcome::Refused;
         };
         let (scope, headers, render): Exposition = match input.field(|i| &i.path).as_str() {
             Ok(METRICS) => (SNAPSHOT_SCOPE_WHOLE, METRICS_HEADERS, crate::render),
             Ok(METRICS_HOOKS) => (SNAPSHOT_SCOPE_HOOKS, HOOKS_HEADERS, crate::render_hooks),
-            _ => return Outcome::Refused,
+            _ => {
+                out.error(NOT_A_ROUTE);
+                return Outcome::Refused;
+            }
         };
         let Some(services) = h.host().and_then(|host| host.services()) else {
+            out.error(NO_SERVICES);
             return Outcome::Failed;
         };
         let (status, headers, body) = match h.life().read(&services, scope) {
             Ok(Some(families)) => (200u16, headers, render(&families).into_bytes()),
             Ok(None) => (503u16, NOT_READY_HEADERS, Vec::new()),
-            Err(_) => return Outcome::Failed,
+            Err(e) => {
+                out.error(match e {
+                    ServiceError::Unserved => READ_UNSERVED,
+                    ServiceError::Declined(_) => READ_DECLINED,
+                    ServiceError::Broken => READ_BROKEN,
+                    ServiceError::Short { .. } => READ_SHORT,
+                });
+                return Outcome::Failed;
+            }
         };
         out.set(|o| &o.status_code, status);
         // The header list is program memory; the answer names material, so it names a lease (the
