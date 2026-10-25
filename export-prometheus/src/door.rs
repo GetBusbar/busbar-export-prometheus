@@ -280,8 +280,9 @@ impl SafeSlot for Status {
 const NO_INSTANCE: &str = "no opened prometheus instance";
 const NOT_A_ROUTE: &str = "not a route this sink serves (only GET /metrics and /metrics/hooks)";
 const NO_SERVICES: &str =
-    "the host offers this sink no services: /metrics cannot read the snapshot";
-const READ_UNSERVED: &str = "the host serves no snapshot.read: /metrics cannot read the snapshot";
+    "the host offers this sink no services: the exposition cannot read the snapshot";
+const READ_UNSERVED: &str =
+    "the host serves no snapshot.read: the exposition cannot read the snapshot";
 const READ_DECLINED: &str = "the host declined the snapshot read";
 const READ_BROKEN: &str = "the host's snapshot broke the service's rules";
 const READ_SHORT: &str = "the snapshot outgrew the buffer on the one re-call";
