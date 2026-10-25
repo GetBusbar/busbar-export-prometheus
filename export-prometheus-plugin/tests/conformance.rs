@@ -208,6 +208,12 @@ fn kind_code(kind: &str) -> u8 {
 /// the bytes written or needed, and the text — and, for a short answer, the ONE re-call with a
 /// buffer as large as needed.
 fn scrape(p: &Plugin<Export>, families: &[MetricFamily], cap: usize) -> Value {
+    scrape_flagged(p, families, cap, 0)
+}
+
+/// [`scrape`] with the `ScrapeIn` head's `flags` set — `SCRAPE_FLAG_HOOK_FAMILIES` asks for the
+/// host's hook families in 1.5.5's `/metrics/hooks` layout.
+fn scrape_flagged(p: &Plugin<Export>, families: &[MetricFamily], cap: usize, flags: u32) -> Value {
     let labels: Vec<Vec<Vec<ScrapeLabel>>> = families
         .iter()
         .map(|f| {
@@ -257,6 +263,7 @@ fn scrape(p: &Plugin<Export>, families: &[MetricFamily], cap: usize) -> Value {
     let call = |buf: &mut Vec<u8>| {
         let mut input: ScrapeIn = blank_in();
         input.head = in_head();
+        input.head.flags = flags;
         input.families = lent.as_ptr();
         input.families_len = lent.len();
         input.buf = buf.as_mut_ptr();
@@ -407,6 +414,61 @@ fn the_linked_and_the_dropped_in_prometheus_sink_are_one_sink() {
         "an empty recorder renders nothing"
     );
     assert_eq!(linked["close"], "Ready ");
+}
+
+/// The hook-families scrape (`SCRAPE_FLAG_HOOK_FAMILIES`, 1.5.5's `/metrics/hooks`) is rendered in
+/// the hook layout through BOTH doors: families by name whatever order they are handed in, HELP
+/// when present, and NO blank line between families — unlike the recorder layout.
+#[test]
+fn the_hook_families_scrape_is_the_hook_layout_through_both_doors() {
+    const HOOKS: &str = "# TYPE busbar_hook_calls_total counter\n\
+                         busbar_hook_calls_total{hook=\"a\"} 2\n\
+                         busbar_hook_calls_total{hook=\"b\"} 5\n\
+                         # HELP busbar_hook_duration_seconds hook latency\n\
+                         # TYPE busbar_hook_duration_seconds gauge\n\
+                         busbar_hook_duration_seconds{hook=\"a\"} 0.5\n";
+    let sample = |name: &str, hook: &str, value: &str| MetricSample {
+        name: name.to_string(),
+        labels: vec![("hook".to_string(), hook.to_string())],
+        value: value.to_string(),
+    };
+    // Handed out of name order: the gauge (with HELP) before the counter.
+    let handed = vec![
+        MetricFamily {
+            name: "busbar_hook_duration_seconds".to_string(),
+            kind: "gauge".to_string(),
+            help: Some("hook latency".to_string()),
+            samples: vec![sample("busbar_hook_duration_seconds", "a", "0.5")],
+        },
+        MetricFamily {
+            name: "busbar_hook_calls_total".to_string(),
+            kind: "counter".to_string(),
+            help: None,
+            samples: vec![
+                sample("busbar_hook_calls_total", "a", "2"),
+                sample("busbar_hook_calls_total", "b", "5"),
+            ],
+        },
+    ];
+    for dropped in [false, true] {
+        let d = dispatcher();
+        let p = load(&d, dropped);
+        assert_eq!(validate(&p, SETTINGS), "Ready ");
+        assert_eq!(open(&p), "Ready ");
+        let got = scrape_flagged(&p, &handed, 64 * 1024, export::SCRAPE_FLAG_HOOK_FAMILIES);
+        assert_eq!(
+            got,
+            json!({"answer": "Ready ", "written": HOOKS.len(), "needed": 0, "text": HOOKS, "untouched": false, "recall": null}),
+            "dropped_in={dropped}: the hook scrape is the hook layout"
+        );
+        // The same families without the flag are the recorder layout (blank line between).
+        let plain = scrape(&p, &handed, 64 * 1024);
+        assert_ne!(
+            plain["text"], got["text"],
+            "dropped_in={dropped}: the flag selects the layout"
+        );
+        close(&p);
+    }
 }
 
 /// RED: the door asked for as another kind is refused, by either origin, before any slot runs.
