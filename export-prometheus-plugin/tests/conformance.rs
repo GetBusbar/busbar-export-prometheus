@@ -509,7 +509,7 @@ fn a_manifest_stating_the_1_5_5_export_abi_is_refused() {
 // the sink driven two ways through the one loader over the export kind's script with the inputs in
 // `conformance.json`, every step's crossings exactly at the script's pin, the two folds equal, and
 // the suite's RED arms kept.
-busbar_plugin_loader::conformance_suite! {
+busbar_test_kit::conformance_suite! {
     door: busbar_export_prometheus::door::door,
     cdylib: "busbar_export_prometheus_plugin",
     inputs: include_str!("conformance.json"),
