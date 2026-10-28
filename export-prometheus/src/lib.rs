@@ -21,32 +21,35 @@ pub mod door;
 
 use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
 
-/// Render the host recorder's snapshot (the export kind's families) in the Prometheus TEXT
-/// exposition format, family by family: `# HELP` (when present), `# TYPE`, the samples, a blank
-/// line. Every label value and number is written as the snapshot carries it, so rendering a
-/// snapshot of the host's own exposition reproduces it byte for byte.
-fn render_exposition(families: &[MetricFamily]) -> String {
-    let mut out = String::new();
-    for f in families {
-        if let Some(help) = &f.help {
-            out.push_str(&format!("# HELP {} {help}\n", f.name));
+/// One family in the Prometheus TEXT exposition format: `# HELP` (when present), `# TYPE`, the
+/// `samples` as handed, and a blank line when `blank_line` (the host exposition closes each family
+/// with one; the hook exposition does not). Every label value and number is written as the snapshot
+/// carries it, so rendering a snapshot of the host's own exposition reproduces it byte for byte.
+fn write_family<'a>(
+    out: &mut String,
+    f: &MetricFamily,
+    samples: impl Iterator<Item = &'a MetricSample>,
+    blank_line: bool,
+) {
+    if let Some(help) = &f.help {
+        out.push_str(&format!("# HELP {} {help}\n", f.name));
+    }
+    out.push_str(&format!("# TYPE {} {}\n", f.name, f.kind));
+    for s in samples {
+        out.push_str(&s.name);
+        if !s.labels.is_empty() {
+            let labels: Vec<String> = s
+                .labels
+                .iter()
+                .map(|(k, v)| format!("{k}=\"{v}\""))
+                .collect();
+            out.push_str(&format!("{{{}}}", labels.join(",")));
         }
-        out.push_str(&format!("# TYPE {} {}\n", f.name, f.kind));
-        for s in &f.samples {
-            out.push_str(&s.name);
-            if !s.labels.is_empty() {
-                let labels: Vec<String> = s
-                    .labels
-                    .iter()
-                    .map(|(k, v)| format!("{k}=\"{v}\""))
-                    .collect();
-                out.push_str(&format!("{{{}}}", labels.join(",")));
-            }
-            out.push_str(&format!(" {}\n", s.value));
-        }
+        out.push_str(&format!(" {}\n", s.value));
+    }
+    if blank_line {
         out.push('\n');
     }
-    out
 }
 
 /// Render the host's HOOK families (`/metrics/hooks`, the export kind's `scrape` with
@@ -59,22 +62,7 @@ pub fn render_hooks(families: &[MetricFamily]) -> String {
     ordered.sort_by(|a, b| a.name.cmp(&b.name));
     let mut out = String::new();
     for f in ordered {
-        if let Some(help) = &f.help {
-            out.push_str(&format!("# HELP {} {help}\n", f.name));
-        }
-        out.push_str(&format!("# TYPE {} {}\n", f.name, f.kind));
-        for s in &f.samples {
-            out.push_str(&s.name);
-            if !s.labels.is_empty() {
-                let labels: Vec<String> = s
-                    .labels
-                    .iter()
-                    .map(|(k, v)| format!("{k}=\"{v}\""))
-                    .collect();
-                out.push_str(&format!("{{{}}}", labels.join(",")));
-            }
-            out.push_str(&format!(" {}\n", s.value));
-        }
+        write_family(&mut out, f, f.samples.iter(), false);
     }
     out
 }
@@ -154,7 +142,11 @@ pub fn validate(settings: &[u8]) -> Result<(), String> {
 /// family-closing blank line, every label value and number exactly as the recorder wrote it — in
 /// the STABLE order [`canonical_order`] gives it.
 pub fn render(families: &[MetricFamily]) -> String {
-    render_exposition(&canonical_order(families))
+    let mut out = String::new();
+    for f in canonical_order(families) {
+        write_family(&mut out, f, series_order(f), true);
+    }
+    out
 }
 
 /// A family kind's place in the stable order: counters, then gauges, then distributions
@@ -181,34 +173,36 @@ fn kind_rank(kind: &str) -> u8 {
 /// prior capture cannot pin it), but WHICH KIND'S BLOCK COMES FIRST is code-determined and never
 /// varies. Sorting by name within a kind is a legitimate, deterministic pick from among the orders
 /// v1.5.5's own hash-random renderer could already have produced.
+fn canonical_order(families: &[MetricFamily]) -> Vec<&MetricFamily> {
+    let mut out: Vec<&MetricFamily> = families.iter().collect();
+    out.sort_by(|a, b| {
+        kind_rank(&a.kind)
+            .cmp(&kind_rank(&b.kind))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    out
+}
+
+/// The family's samples in a STABLE order: its series by their labels.
 ///
 /// A SERIES is every sample sharing one label set once `le` / `quantile` are set aside — a
 /// histogram's `_bucket` lines with its `_sum` and `_count`, a summary's quantiles with its `_sum`
 /// and `_count`. A series is moved as a unit and its own lines keep the order the recorder wrote
 /// them in (buckets ascending, then `_sum`, then `_count`), so every output is one of the orders
 /// the recorder could already print.
-fn canonical_order(families: &[MetricFamily]) -> Vec<MetricFamily> {
-    let mut out = families.to_vec();
-    out.sort_by(|a, b| {
-        kind_rank(&a.kind)
-            .cmp(&kind_rank(&b.kind))
-            .then_with(|| a.name.cmp(&b.name))
-    });
-    for family in &mut out {
-        let mut series: std::collections::BTreeMap<Vec<(String, String)>, Vec<MetricSample>> =
-            std::collections::BTreeMap::new();
-        for sample in std::mem::take(&mut family.samples) {
-            let key = sample
-                .labels
-                .iter()
-                .filter(|(k, _)| k != "le" && k != "quantile")
-                .cloned()
-                .collect();
-            series.entry(key).or_default().push(sample);
-        }
-        family.samples = series.into_values().flatten().collect();
+fn series_order(family: &MetricFamily) -> impl Iterator<Item = &MetricSample> {
+    let mut series: std::collections::BTreeMap<Vec<(&str, &str)>, Vec<&MetricSample>> =
+        std::collections::BTreeMap::new();
+    for sample in &family.samples {
+        let key = sample
+            .labels
+            .iter()
+            .filter(|(k, _)| k != "le" && k != "quantile")
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        series.entry(key).or_default().push(sample);
     }
-    out
+    series.into_values().flatten()
 }
 
 #[cfg(test)]

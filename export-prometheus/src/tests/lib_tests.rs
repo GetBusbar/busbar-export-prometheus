@@ -6,6 +6,15 @@
 //! is `busbar-export-prometheus-plugin`'s conformance test.
 
 use super::*;
+
+/// The snapshot rendered in the order handed, unsorted: the RED arm of the hash-order test.
+fn render_exposition(families: &[MetricFamily]) -> String {
+    let mut out = String::new();
+    for f in families {
+        write_family(&mut out, f, f.samples.iter(), true);
+    }
+    out
+}
 use busbar_contract::abi::sdk::MetricSample;
 
 /// The refusals read as the configuration's own settings errors always have — one line each,
