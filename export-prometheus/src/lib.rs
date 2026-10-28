@@ -5,15 +5,14 @@
 //!
 //! A PULL sink on the export kind's memory ABI. The host keeps what only the host can own: the
 //! recorder every emit site writes, its scrape-time gauges and the hook-metrics cache, which it
-//! lends through its kind-neutral snapshot service. This sink owns the rest (`BUSBAR-1.6.0.md` §5
-//! l.626-628, Appendix A B.5 l.3829): it carries the `metrics` stream, it validates the settings an
-//! operator writes for it, it declares the well-known `GET /metrics` and `GET /metrics/hooks` as its
-//! own routes behind the data key, and its `serve` reads the host's families (`snapshot.read`, in
-//! the recorder's order) and answers the exposition in 1.5.5's bytes and content types. A snapshot
-//! the host hands to `scrape` renders the same way into the host's buffer.
+//! lends through its kind-neutral snapshot service. This sink owns the rest: it carries the
+//! `metrics` stream, validates its settings, declares `GET /metrics` and `GET /metrics/hooks` as its
+//! own routes behind the data key, and its `serve` reads the host's families (`snapshot.read`) and
+//! answers the exposition. A snapshot the host hands to `scrape` renders the same way into the
+//! host's buffer.
 //!
-//! One door, both ways in: [`door::door`] is the row a busbar build links, and the sibling
-//! `busbar-export-prometheus-plugin` cdylib exports the same door as its one symbol.
+//! [`door::door`] is the row a busbar build links; the sibling `busbar-export-prometheus-plugin`
+//! cdylib exports the same door as its one symbol.
 
 #![forbid(unsafe_code)]
 
@@ -53,10 +52,9 @@ fn write_family<'a>(
 }
 
 /// Render the host's HOOK families (`/metrics/hooks`, the export kind's `scrape` with
-/// `SCRAPE_FLAG_HOOK_FAMILIES`) in 1.5.5's hook exposition layout: families by name (the order the
-/// host folded them in, kept stable by name), `# HELP` when present then `# TYPE`, each family's
-/// samples in the order handed (hooks by name, then each hook's own report order), and NO blank line
-/// between families. Every label value and number is written as the host spelled it.
+/// `SCRAPE_FLAG_HOOK_FAMILIES`): families by name, `# HELP` when present then `# TYPE`, each
+/// family's samples in the order handed, and NO blank line between families. Every label value and
+/// number is written as the host spelled it.
 pub fn render_hooks(families: &[MetricFamily]) -> String {
     let mut ordered: Vec<&MetricFamily> = families.iter().collect();
     ordered.sort_by(|a, b| a.name.cmp(&b.name));
@@ -67,9 +65,8 @@ pub fn render_hooks(families: &[MetricFamily]) -> String {
     out
 }
 
-/// THE LIMITS CHECK across every configured instance of this sink, in configuration order: the sink
-/// states the `one_instance` mark, so a second instance is refused in 1.5.5's words (shadow-oracle
-/// cell `boot.refusal__BOOT-102__validate`), once per extra instance, naming the first.
+/// The limits check across every configured instance, in configuration order: the sink states the
+/// `one_instance` mark, so each extra instance is refused, naming the first.
 pub fn check_limits(instances: &[String]) -> Vec<String> {
     let Some((first, rest)) = instances.split_first() else {
         return Vec::new();
@@ -85,11 +82,10 @@ pub fn check_limits(instances: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// The row's canonical name.
+/// The plugin's canonical name.
 pub const NAME: &str = "busbar-export-prometheus";
 
-/// The `module:` an operator writes — the name 1.5.5 spelled the built-in by — the row's alias on
-/// either door.
+/// The `module:` an operator writes, the alias on either door.
 pub const ALIAS: &str = "prometheus";
 
 /// What this sink DECLARES to the host (the manifest's `declares` section, `declares.json`, which
@@ -97,10 +93,9 @@ pub const ALIAS: &str = "prometheus";
 /// code of its own and has no destination.
 pub const DECLARES: &str = include_str!("../declares.json");
 
-/// The `settings:` an operator writes for this sink — the same shape, field for field, the
-/// configuration grammar has frozen for it since 1.5.3, so a refusal reads exactly as it always has.
-/// The VALUES are the host's to act on (the recorder's retention window, the scrape-time gauge
-/// bound); this sink only says whether they are well formed.
+/// The `settings:` an operator writes for this sink, field for field the configuration grammar's
+/// shape. The VALUES are the host's to act on (retention window, scrape-time gauge bound); this
+/// sink only says whether they are well formed.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrometheusSettings {
@@ -165,14 +160,10 @@ fn kind_rank(kind: &str) -> u8 {
 /// family its series by their labels. The recorder hands families and series over in its maps' hash
 /// order, which differs from boot to boot; the same metrics must scrape to the same bytes.
 ///
-/// THE KIND GROUPING is not this sink's invention: it is v1.5.5's own wire behaviour, forced by the
-/// `metrics-exporter-prometheus` renderer both v1.5.5 and this host still link — `render_to_write`
-/// drains its counters map whole, then its gauges map whole, then its distributions (histogram +
-/// summary) map whole, three separate passes in that fixed order, every release. A v1.5.5 capture's
-/// FAMILY ORDER WITHIN a kind is not code-determined (hash-map order, "varies between runs" — a
-/// prior capture cannot pin it), but WHICH KIND'S BLOCK COMES FIRST is code-determined and never
-/// varies. Sorting by name within a kind is a legitimate, deterministic pick from among the orders
-/// v1.5.5's own hash-random renderer could already have produced.
+/// The kind grouping follows the `metrics-exporter-prometheus` renderer the host links:
+/// `render_to_write` drains its counters map whole, then gauges, then distributions (histogram +
+/// summary), in that fixed order. Family order within a kind is hash-map order there; sorting by
+/// name is a deterministic pick among the orders it could produce.
 fn canonical_order(families: &[MetricFamily]) -> Vec<&MetricFamily> {
     let mut out: Vec<&MetricFamily> = families.iter().collect();
     out.sort_by(|a, b| {

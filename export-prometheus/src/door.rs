@@ -9,12 +9,9 @@
 //! * `open` / `refresh` — settings `validate` refuses are refused in its words (a refused refresh
 //!   leaves the instance as it was); nothing to hold but the size the last snapshot took (the
 //!   buffer the next read starts with).
-//! * `serve` — THE SINK'S OWN ROUTES (`BUSBAR-1.6.0.md` Appendix A B.5, l.3829: "`/metrics` and
-//!   `/metrics/hooks` are the scrape sink's own listener needs: declared in its `routes` list,
-//!   served on the data listener behind the data key, and answered by its `serve`"; §5
-//!   l.626-628). The Statement declares `GET /metrics` and `GET /metrics/hooks` behind the data
-//!   key; `serve` reads the host's families through the host snapshot service (`snapshot.read`,
-//!   scope WHOLE or HOOKS) and answers 1.5.5's bytes: `200` with the exposition
+//! * `serve` — the sink's own routes. The Statement declares `GET /metrics` and `GET /metrics/hooks`
+//!   behind the data key; `serve` reads the host's families through the host snapshot service
+//!   (`snapshot.read`, scope WHOLE or HOOKS) and answers `200` with the exposition
 //!   ([`crate::render`]) under `text/plain; version=0.0.4`, or the hook exposition
 //!   ([`crate::render_hooks`]) under `text/plain; version=0.0.4; charset=utf-8`; NOT READY (the
 //!   host's recorder is not installed yet) is `503` with `Retry-After: 1` and no body. A read the
@@ -22,9 +19,9 @@
 //! * `scrape` — a snapshot the host hands in, rendered ([`crate::render`]) into the host's buffer; a
 //!   buffer too small is FAILED with the bytes `needed`, nothing written, and the host calls again
 //!   once. With `SCRAPE_FLAG_HOOK_FAMILIES` on the head the families are the host's hook families
-//!   and render as 1.5.5's `/metrics/hooks` ([`crate::render_hooks`]).
+//!   and render as the `/metrics/hooks` exposition ([`crate::render_hooks`]).
 //! * `deliver` — READY, nothing kept: the host pulls `metrics`, it never pushes them.
-//! * `status` — READY with nothing to report. `check` — at the limits phase, 1.5.5's refusal of
+//! * `status` — READY with nothing to report. `check` — at the limits phase, a refusal of
 //!   every instance after the first ([`crate::check_limits`]): the sink states the `one_instance`
 //!   mark, so the host asks it while the configuration is resolved; READY with nothing otherwise.
 //!
@@ -77,7 +74,7 @@ const fn get(path: &'static str) -> Route {
     }
 }
 
-/// The sink's own routes: the two well-known expositions, 1.5.5's paths behind the data key.
+/// The sink's own routes: the two well-known expositions behind the data key.
 const ROUTES: &[Route] = &[get(METRICS), get(METRICS_HOOKS)];
 
 const TAIL: Tail = Tail {
@@ -293,7 +290,7 @@ const READ_DECLINED: &str = "the host declined the snapshot read";
 const READ_BROKEN: &str = "the host's snapshot broke the service's rules";
 const READ_SHORT: &str = "the snapshot outgrew the buffer on the one re-call";
 
-/// `check`: at the limits phase, a second instance refused in 1.5.5's words.
+/// `check`: at the limits phase, a second instance is refused.
 pub struct Check;
 
 impl SafeSlot for Check {
@@ -326,10 +323,9 @@ impl SafeSlot for Check {
     }
 }
 
-/// `/metrics`' response headers: 1.5.5's content type (oracle cell `ops.scrape__metrics__key`).
+/// `/metrics`' response headers.
 const METRICS_HEADERS: &[AbiStr] = &[abi("content-type"), abi("text/plain; version=0.0.4")];
-/// `/metrics/hooks`' response headers: 1.5.5's content type, which carried a charset (oracle cell
-/// `ops.scrape__metricshooks__key`).
+/// `/metrics/hooks`' response headers; this content type carries a charset.
 const HOOKS_HEADERS: &[AbiStr] = &[
     abi("content-type"),
     abi("text/plain; version=0.0.4; charset=utf-8"),
