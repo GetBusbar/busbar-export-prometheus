@@ -18,6 +18,8 @@
 
 pub mod door;
 
+use busbar_contract::abi::sdk::export::second_instances;
+use busbar_contract::abi::sdk::life::settings_as;
 use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
 
 /// One family in the Prometheus TEXT exposition format: `# HELP` (when present), `# TYPE`, the
@@ -68,18 +70,12 @@ pub fn render_hooks(families: &[MetricFamily]) -> String {
 /// The limits check across every configured instance, in configuration order: the sink states the
 /// `one_instance` mark, so each extra instance is refused, naming the first.
 pub fn check_limits(instances: &[String]) -> Vec<String> {
-    let Some((first, rest)) = instances.split_first() else {
-        return Vec::new();
-    };
-    rest.iter()
-        .map(|name| {
-            format!(
-                "export.{name}: a second `module: {ALIAS}` instance (already defined as '{first}'). \
-                 Prometheus serves the ONE well-known /metrics route, so a second instance could \
-                 only be silently ignored — keep a single instance."
-            )
-        })
-        .collect()
+    second_instances(
+        instances,
+        ALIAS,
+        "Prometheus serves the ONE well-known /metrics route, so a second instance could \
+         only be silently ignored — keep a single instance.",
+    )
 }
 
 /// The plugin's canonical name.
@@ -123,10 +119,10 @@ const ZERO_RETENTION: &str =
 /// # Errors
 /// The line, when the settings are refused.
 pub fn validate(settings: &[u8]) -> Result<(), String> {
-    let settings: &[u8] = if settings.is_empty() { b"{}" } else { settings };
-    let parsed = serde_json::from_slice(settings)
-        .and_then(serde_json::from_value::<PrometheusSettings>)
-        .map_err(|e| format!("settings: {e}"))?;
+    let parsed: PrometheusSettings = settings_as(settings).map_err(|r| {
+        r.text()
+            .map_or_else(String::new, std::string::ToString::to_string)
+    })?;
     if parsed.buffer_seconds == 0 {
         return Err(ZERO_RETENTION.to_string());
     }
