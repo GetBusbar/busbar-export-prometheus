@@ -32,15 +32,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use busbar_contract::abi::export::{
     cancel, CheckIn, CheckOut, DeliverIn, ExportStream, Route, ScrapeIn, ScrapeOut, ServeIn,
-    ServeOut, StatusOut, Tail, CHECK_PHASE_LIMITS, ROUTE_AUTH_KEY, SCRAPE_FLAG_HOOK_FAMILIES,
+    ServeOut, Tail, CHECK_PHASE_LIMITS, ROUTE_AUTH_KEY, SCRAPE_FLAG_HOOK_FAMILIES,
 };
 use busbar_contract::abi::host::service::{SNAPSHOT_SCOPE_HOOKS, SNAPSHOT_SCOPE_WHOLE};
-use busbar_contract::abi::mechanism::call::{
-    AbiStr, InHead, OutHead, Outcome, BLOB_JSON, BLOB_OCTETS,
-};
+use busbar_contract::abi::mechanism::call::{AbiStr, OutHead, Outcome, BLOB_JSON, BLOB_OCTETS};
 use busbar_contract::abi::mechanism::door::{KindTailHead, Statement, MARK_ONE_INSTANCE};
 use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
-use busbar_contract::abi::sdk::door::statement;
+use busbar_contract::abi::sdk::door::{abi_str, statement};
+use busbar_contract::abi::sdk::export::{instance_names, tail, Quiet};
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
 use busbar_contract::abi::sdk::{
     Instance, Lent, MetricFamily, MetricSample, Out, Safe, SafeSlot, ServiceError, Services,
@@ -51,14 +50,6 @@ use crate::NAME;
 /// The one stream the sink carries.
 const STREAMS: &[u8] = &[ExportStream::Metrics as u8];
 
-/// A `'static` string as the ABI names it.
-const fn abi(s: &'static str) -> AbiStr {
-    AbiStr {
-        ptr: s.as_ptr(),
-        len: s.len(),
-    }
-}
-
 /// The well-known exposition path.
 const METRICS: &str = "/metrics";
 /// The well-known hook exposition path.
@@ -67,8 +58,8 @@ const METRICS_HOOKS: &str = "/metrics/hooks";
 /// `GET path` behind the data plane's key.
 const fn get(path: &'static str) -> Route {
     Route {
-        path: abi(path),
-        method: abi("GET"),
+        path: abi_str(path),
+        method: abi_str("GET"),
         auth: ROUTE_AUTH_KEY,
         _reserved: 0,
     }
@@ -77,16 +68,7 @@ const fn get(path: &'static str) -> Route {
 /// The sink's own routes: the two well-known expositions behind the data key.
 const ROUTES: &[Route] = &[get(METRICS), get(METRICS_HOOKS)];
 
-const TAIL: Tail = Tail {
-    head: KindTailHead {
-        size: std::mem::size_of::<Tail>() as u32,
-        _reserved: 0,
-    },
-    streams: STREAMS.as_ptr(),
-    streams_len: STREAMS.len(),
-    routes: ROUTES.as_ptr(),
-    routes_len: ROUTES.len(),
-};
+const TAIL: Tail = tail(STREAMS, ROUTES);
 
 /// This plugin's Statement: its name and version, the `metrics` stream and its two routes.
 pub const STATEMENT: Statement = Statement {
@@ -262,22 +244,6 @@ impl SafeSlot for Deliver {
     }
 }
 
-/// `status`: nothing to report.
-pub struct Status;
-
-impl SafeSlot for Status {
-    type In = InHead;
-    type Out = StatusOut;
-    type State = Held<Prometheus>;
-    fn call(
-        _: Instance<'_, Held<Prometheus>>,
-        _: Lent<'_, InHead>,
-        _: Out<'_, StatusOut>,
-    ) -> Outcome {
-        Outcome::Ready
-    }
-}
-
 /// The error texts of `serve` and `check`'s FAILED and REFUSED answers: one per cause, so the
 /// host's warn names why instead of a bare outcome.
 const NO_INSTANCE: &str = "no opened prometheus instance";
@@ -309,12 +275,7 @@ impl SafeSlot for Check {
         if input.phase != CHECK_PHASE_LIMITS {
             return Outcome::Ready;
         }
-        let names: Vec<String> = input
-            .instances()
-            .iter()
-            .map(|c| text(c.field(|c| &c.name)).unwrap_or_default())
-            .collect();
-        let lines = crate::check_limits(&names);
+        let lines = crate::check_limits(&instance_names(input));
         if !lines.is_empty() {
             let json = serde_json::to_vec(&lines).unwrap_or_default();
             out.lease(|o| &o.findings, h.leases(), json, BLOB_JSON);
@@ -324,14 +285,17 @@ impl SafeSlot for Check {
 }
 
 /// `/metrics`' response headers.
-const METRICS_HEADERS: &[AbiStr] = &[abi("content-type"), abi("text/plain; version=0.0.4")];
+const METRICS_HEADERS: &[AbiStr] = &[
+    abi_str("content-type"),
+    abi_str("text/plain; version=0.0.4"),
+];
 /// `/metrics/hooks`' response headers; this content type carries a charset.
 const HOOKS_HEADERS: &[AbiStr] = &[
-    abi("content-type"),
-    abi("text/plain; version=0.0.4; charset=utf-8"),
+    abi_str("content-type"),
+    abi_str("text/plain; version=0.0.4; charset=utf-8"),
 ];
 /// The not-ready answer's headers: retry in a second.
-const NOT_READY_HEADERS: &[AbiStr] = &[abi("retry-after"), abi("1")];
+const NOT_READY_HEADERS: &[AbiStr] = &[abi_str("retry-after"), abi_str("1")];
 
 /// What one route answers from: the snapshot scope it reads, its response headers and its
 /// renderer.
@@ -392,14 +356,14 @@ impl SafeSlot for Serve {
 }
 
 mod table {
-    use super::{Check, Deliver, Prometheus, Safe, Scrape, Serve, Status};
+    use super::{Check, Deliver, Prometheus, Quiet, Safe, Scrape, Serve};
 
     busbar_contract::plugin_door! {
         ops: busbar_contract::abi::export::Ops,
         statement: super::STATEMENT,
         lifecycle: life(Prometheus),
         kind_ops: {
-            deliver: Safe<Deliver>, scrape: Safe<Scrape>, status: Safe<Status>,
+            deliver: Safe<Deliver>, scrape: Safe<Scrape>, status: Safe<Quiet<Prometheus>>,
             check: Safe<Check>, serve: Safe<Serve>,
         },
     }
