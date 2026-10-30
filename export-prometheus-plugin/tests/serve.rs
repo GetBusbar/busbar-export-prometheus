@@ -22,6 +22,7 @@
 //! host answers `502`); a path the sink does not own is REFUSED; both answers name their cause in the error text.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use busbar_contract::abi::export::{self, ServeIn, ServeOut};
@@ -64,6 +65,11 @@ struct Host {
     no_hooks: Mutex<bool>,
     /// When set, the exposition the whole snapshot (scope 0) holds instead of `OWN`.
     whole: Mutex<Option<String>>,
+    /// How many `snapshot.read` calls the host has served, short answers included.
+    reads: AtomicUsize,
+    /// When set, the whole snapshot is `step` samples per read so far (the first read `step`, the second `2 * step`, ...)
+    /// (a recorder that outgrows any buffer sized from the read before).
+    growing: Mutex<Option<usize>>,
 }
 
 fn families(text: &str) -> Vec<Family> {
@@ -72,6 +78,10 @@ fn families(text: &str) -> Vec<Family> {
 
 impl HostServices for Host {
     fn snapshot_read(&self, _: &Caller, scope: u32) -> Snapshot {
+        let read = self.reads.fetch_add(1, Ordering::SeqCst);
+        if let Some(step) = *self.growing.lock().unwrap() {
+            return Snapshot::Families(families(&big_exposition(step * (read + 1))));
+        }
         if *self.declined.lock().unwrap() {
             return Snapshot::Refused("not granted");
         }
@@ -377,14 +387,41 @@ fn a_snapshot_larger_than_the_first_read_buffer_is_served_whole_through_both_doo
         let host = Arc::new(Host::default());
         *host.ready.lock().unwrap() = true;
         *host.whole.lock().unwrap() = Some(big.clone());
-        let (_d, p) = opened(host, dropped);
+        let (_d, p) = opened(host.clone(), dropped);
+        let mut calls = Vec::new();
         for read in ["first", "second, from the stored hint"] {
+            let before = host.reads.load(Ordering::SeqCst);
             assert_eq!(
                 get(&p, "/metrics"),
                 json!({"outcome": "Ready", "status": 200,
                        "headers": ["content-type", "text/plain; version=0.0.4"], "body": big}),
                 "dropped={dropped}, {read} read"
             );
+            calls.push(host.reads.load(Ordering::SeqCst) - before);
         }
+        // The first GET reads short, then re-calls once; the second starts from the stored hint,
+        // so its one read fits.
+        assert_eq!(calls, [2, 1], "dropped={dropped}: snapshot reads per GET");
+    }
+}
+
+/// A snapshot that outgrows the buffer even on the one re-call: the host answers `Short` twice, and
+/// the door FAILS the serve naming the cause (the host answers `502`), reading exactly twice.
+#[test]
+fn a_snapshot_that_outgrows_the_one_re_call_is_failed_through_both_doors() {
+    for dropped in [false, true] {
+        let host = Arc::new(Host::default());
+        *host.ready.lock().unwrap() = true;
+        // Each read is twice the last: the re-call's 1.25x headroom cannot hold it.
+        *host.growing.lock().unwrap() = Some(1500);
+        let (_d, p) = opened(host.clone(), dropped);
+        let (answer, error) = serve(&p, "/metrics");
+        assert_eq!(answer["outcome"], "Failed", "dropped={dropped}");
+        assert_eq!(
+            error.as_deref(),
+            Some("the snapshot outgrew the buffer on the one re-call"),
+            "dropped={dropped}"
+        );
+        assert_eq!(host.reads.load(Ordering::SeqCst), 2, "one re-call, no more");
     }
 }
