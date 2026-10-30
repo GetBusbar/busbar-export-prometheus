@@ -21,7 +21,7 @@ Configured under the `prometheus` module name.
 ## Build
 
 ```bash
-cargo build --release -p busbar-export-prometheus-plugin
+cargo build --release -p busbar-export-prometheus-plugin --features dropped-in
 ```
 
 ## Tests

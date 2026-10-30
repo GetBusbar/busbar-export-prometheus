@@ -270,6 +270,7 @@ version = "1.6.0"
 dependencies = [
  "busbar-contract",
  "busbar-export-prometheus",
+ "busbar-export-prometheus-plugin",
  "busbar-plugin-loader",
  "busbar-test-kit",
  "serde_json",
