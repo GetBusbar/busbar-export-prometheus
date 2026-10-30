@@ -24,7 +24,8 @@
 //! * `status` — READY with nothing to report. `check` — at the limits phase, a refusal of
 //!   every instance after the first ([`crate::check_limits`]): the sink states the `one_instance`
 //!   mark, so the host asks it while the configuration is resolved; READY with nothing at the instances
-//!   phase, and a phase it does not know is REFUSED. Every kind op on no instance is REFUSED.
+//!   phase, and a phase it does not know is REFUSED. `deliver`, `check` and `serve` on no instance
+//!   are REFUSED; `status` and `scrape` need none (the host refuses an instance-less call itself).
 //!
 //! No `unsafe` here: the snapshot and the buffer `scrape` is lent are read and written through the
 //! SDK's safe lend (`families()`, `samples()`, `labels()`, `buf()`).
