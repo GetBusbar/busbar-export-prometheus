@@ -249,7 +249,9 @@ impl SafeSlot for Deliver {
 
 /// The error texts of `serve` and `check`'s FAILED and REFUSED answers: one per cause, so the
 /// host's warn names why instead of a bare outcome.
-const NO_INSTANCE: &str = "no opened prometheus instance";
+pub const NO_INSTANCE: &str = "no opened prometheus instance";
+/// `check` at a phase this sink does not know.
+pub const UNKNOWN_PHASE: &str = "not a check phase this sink knows (limits or instances)";
 const NOT_A_ROUTE: &str = "not a route this sink serves (only GET /metrics and /metrics/hooks)";
 const NO_SERVICES: &str =
     "the host offers this sink no services: the exposition cannot read the snapshot";

@@ -2,11 +2,11 @@
 [package]
 name = "busbar-export-prometheus"
 version = "1.6.0"
-publish = false
-edition = "2021"
-rust-version = "1.97"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "The prometheus export sink: renders the host recorder's snapshot as the Prometheus text exposition the host serves at the well-known /metrics. Linked into the shipped binary, or dropped in as a signed tarball — one registration, one contract."
-license = "Apache-2.0"
+license.workspace = true
 
 [lib]
 # rlib only: the logic and its door. A build that LINKS this crate registers `door::door` as its row
@@ -24,3 +24,10 @@ busbar-contract = { workspace = true }
 # its refusals read exactly as the configuration's own settings errors always have.
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# The contract's plugin test harness (fake host, door view, reply copies): dev-only, so no shipped image carries it.
+busbar-contract = { workspace = true, features = ["test-seal"] }
+
+[lints]
+workspace = true

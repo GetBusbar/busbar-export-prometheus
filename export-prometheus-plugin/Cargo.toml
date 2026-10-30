@@ -2,11 +2,11 @@
 [package]
 name = "busbar-export-prometheus-plugin"
 version = "1.6.0"
-publish = false            # first-party signed cdylib, shipped as a packed/signed tarball, not to crates.io
-edition = "2021"
-rust-version = "1.97"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "First-party signed kind:export plugin cdylib: the prometheus export sink (`module: prometheus`), packaged as a droppable busbar plugin. Drop the signed tarball into `plugins/` and name it from an `export.<name>.module: prometheus` block."
-license = "Apache-2.0"
+license.workspace = true
 
 [lib]
 # cdylib: the DROPPED-IN door, exporting `busbar_plugin_door` (a signed tarball in `plugins/`).
@@ -37,3 +37,6 @@ busbar-export-prometheus-plugin = { path = ".", features = ["dropped-in"] }
 busbar-plugin-loader = { workspace = true }
 busbar-test-kit = { workspace = true }
 serde_json = { workspace = true }
+
+[lints]
+workspace = true
