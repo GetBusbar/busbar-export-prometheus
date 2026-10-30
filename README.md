@@ -16,7 +16,21 @@ First-party signed kind:export plugin cdylib: the prometheus export sink (module
 
 ## Config
 
-Configured under the `prometheus` module name.
+Configured under the `prometheus` module name, as an `export.<name>.module: prometheus` block.
+
+Settings:
+
+- `buffer_seconds` (required): the retention window of the rolling quantile summary, in seconds. It must be positive; `0` is refused, because it retains no observations and every scrape would report empty quantiles while still paying the recording cost. To turn metrics off, remove the instance.
+- `key_gauge_limit` (optional): the bound on per-key scrape-time gauges.
+
+Any other setting is refused.
+
+At most one `module: prometheus` instance may be configured; a second is refused, since the sink serves the one well-known `/metrics` route.
+
+Routes, both served on the data listener behind the data key:
+
+- `GET /metrics`: the host's metric families as the Prometheus text exposition (`text/plain; version=0.0.4`). Before the host's recorder is installed it answers `503` with `Retry-After: 1`.
+- `GET /metrics/hooks`: the host's hook metric families (`text/plain; version=0.0.4; charset=utf-8`).
 
 ## Build
 

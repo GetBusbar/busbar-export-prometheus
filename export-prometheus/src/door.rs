@@ -70,12 +70,15 @@ const ROUTES: &[Route] = &[get(METRICS), get(METRICS_HOOKS)];
 
 const TAIL: Tail = tail(STREAMS, ROUTES);
 
+/// The most calls one instance holds in flight: the `max_inflight` its Statement declares.
+pub const MAX_INFLIGHT: u32 = 64;
+
 /// This plugin's Statement: its name and version, the `metrics` stream and its two routes.
 pub const STATEMENT: Statement = Statement {
     kind_tail: (&TAIL as *const Tail).cast::<KindTailHead>(),
     // One scrape sink renders the ONE well-known `/metrics`: at most one instance.
     marks: MARK_ONE_INSTANCE,
-    ..statement(NAME, env!("CARGO_PKG_VERSION"), 64)
+    ..statement(NAME, env!("CARGO_PKG_VERSION"), MAX_INFLIGHT)
 };
 
 /// The buffer the first snapshot read starts with.

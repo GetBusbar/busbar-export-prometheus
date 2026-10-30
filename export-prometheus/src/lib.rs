@@ -21,6 +21,7 @@ pub mod door;
 use busbar_contract::abi::sdk::export::second_instances;
 use busbar_contract::abi::sdk::life::settings_as;
 use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
+use std::fmt::Write as _;
 
 /// One family in the Prometheus TEXT exposition format: `# HELP` (when present), `# TYPE`, the
 /// `samples` as handed, and a blank line when `blank_line` (the host exposition closes each family
@@ -33,20 +34,22 @@ fn write_family<'a>(
     blank_line: bool,
 ) {
     if let Some(help) = &f.help {
-        out.push_str(&format!("# HELP {} {help}\n", f.name));
+        let _ = writeln!(out, "# HELP {} {help}", f.name);
     }
-    out.push_str(&format!("# TYPE {} {}\n", f.name, f.kind));
+    let _ = writeln!(out, "# TYPE {} {}", f.name, f.kind);
     for s in samples {
         out.push_str(&s.name);
         if !s.labels.is_empty() {
-            let labels: Vec<String> = s
-                .labels
-                .iter()
-                .map(|(k, v)| format!("{k}=\"{v}\""))
-                .collect();
-            out.push_str(&format!("{{{}}}", labels.join(",")));
+            out.push('{');
+            for (i, (k, v)) in s.labels.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                let _ = write!(out, "{k}=\"{v}\"");
+            }
+            out.push('}');
         }
-        out.push_str(&format!(" {}\n", s.value));
+        let _ = writeln!(out, " {}", s.value);
     }
     if blank_line {
         out.push('\n');
