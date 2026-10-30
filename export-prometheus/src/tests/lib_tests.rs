@@ -487,5 +487,8 @@ fn check_refuses_a_phase_it_does_not_know_through_the_door() {
 /// RED before: the Statement stated no rewrite.
 #[test]
 fn the_statement_states_the_alias_rewrite() {
+    use busbar_contract::abi::mechanism::door::REWRITE_ALIAS;
     assert_eq!(crate::door::STATEMENT.rewrites_len, 1);
+    assert_eq!(crate::door::REWRITES[0].class, REWRITE_ALIAS);
+    assert_eq!(crate::door::REWRITES[0].from.len, crate::ALIAS.len());
 }
