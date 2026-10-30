@@ -490,5 +490,10 @@ fn the_statement_states_the_alias_rewrite() {
     use busbar_contract::abi::mechanism::door::REWRITE_ALIAS;
     assert_eq!(crate::door::STATEMENT.rewrites_len, 1);
     assert_eq!(crate::door::REWRITES[0].class, REWRITE_ALIAS);
-    assert_eq!(crate::door::REWRITES[0].from.len, crate::ALIAS.len());
+    // The crate forbids unsafe, so the word is compared as the very bytes of `ALIAS` (same pointer,
+    // same length), not by length alone.
+    let from = crate::door::REWRITES[0].from;
+    assert_eq!(from.len, crate::ALIAS.len());
+    assert!(std::ptr::eq(from.ptr, crate::ALIAS.as_ptr()));
+    assert!(crate::door::REWRITES[0].to.is_absent());
 }
