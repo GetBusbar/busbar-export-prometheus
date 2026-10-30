@@ -423,3 +423,72 @@ fn open_and_refresh_refuse_what_validate_refuses() {
         assert_eq!(refreshed.text(), Some(want.as_str()));
     }
 }
+
+/// `check` is the sink's own: the limits phase asks the one-instance question and the instances
+/// phase has nothing to say (READY, no findings); a phase it does not know is REFUSED saying why,
+/// never run as another (the words every export sibling uses). A kind op on no instance answers
+/// `NO_INSTANCE`; the test kit never enters one, so that arm is not driven here.
+/// RED before: an unknown phase answered READY.
+#[test]
+fn check_refuses_a_phase_it_does_not_know_through_the_door() {
+    use crate::door::{MACRO_DOOR, UNKNOWN_PHASE};
+    use busbar_contract::abi::export::{
+        CheckIn, CheckOut, Ops, CHECK_PHASE_INSTANCES, CHECK_PHASE_LIMITS,
+    };
+    use busbar_contract::abi::mechanism::call::{InHead, OutHead, Outcome};
+    use busbar_contract::abi::mechanism::lifecycle::{slot, OpenIn, OpenOut};
+    use busbar_contract::abi::sdk::test_support::test_in::TestIn;
+    use busbar_contract::abi::sdk::test_support::{reply, zeroed, DoorView};
+    let view = DoorView::of(MACRO_DOOR);
+    let open = view.op::<Ops>(|t| &t.head.open).expect("open");
+    let close = view.op::<Ops>(|t| &t.head.close).expect("close");
+    let check_op = view.op::<Ops>(|t| &t.check).expect("check");
+    let mut opened = reply::call_in(
+        open,
+        None,
+        &TestIn::<OpenIn>::new()
+            .set(|i| &i.head.op, slot::OPEN)
+            .settings(br#"{"buffer_seconds":60}"#),
+        zeroed::<OpenOut>(),
+    );
+    assert_eq!(opened.outcome, Outcome::Ready);
+    let instance = opened.take_instance().expect("an instance");
+    let check = |phase: u32| {
+        reply::call_in(
+            check_op,
+            Some(&instance),
+            &TestIn::<CheckIn>::new()
+                .set(|i| &i.head.op, check_op.index())
+                .set(|i| &i.phase, phase),
+            zeroed::<CheckOut>(),
+        )
+    };
+    for phase in [CHECK_PHASE_LIMITS, CHECK_PHASE_INSTANCES] {
+        let known = check(phase);
+        assert_eq!(known.outcome, Outcome::Ready);
+        assert!(known.owned.is_empty(), "{:?}", known.owned);
+    }
+    let unknown = check(7);
+    assert_eq!(unknown.outcome, Outcome::Refused);
+    assert_eq!(unknown.error.as_deref(), Some(UNKNOWN_PHASE));
+
+    let mut head: OutHead = zeroed();
+    head.size = size_of::<OutHead>() as u32;
+    let closed = reply::close_in(
+        close,
+        instance,
+        &TestIn::<InHead>::new().set(|i| &i.op, slot::CLOSE),
+        head,
+    );
+    assert_eq!(closed.outcome, Outcome::Ready);
+}
+
+/// D5: the Statement states its alias rewrite, one source for both doors.
+/// RED before: the Statement stated no rewrite.
+#[test]
+fn the_statement_states_the_alias_rewrite() {
+    use busbar_contract::abi::mechanism::door::REWRITE_ALIAS;
+    assert_eq!(crate::door::STATEMENT.rewrites_len, 1);
+    assert_eq!(crate::door::REWRITES[0].class, REWRITE_ALIAS);
+    assert_eq!(crate::door::REWRITES[0].from.len, crate::ALIAS.len());
+}

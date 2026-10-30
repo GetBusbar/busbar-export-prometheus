@@ -23,7 +23,8 @@
 //! * `deliver` — READY, nothing kept: the host pulls `metrics`, it never pushes them.
 //! * `status` — READY with nothing to report. `check` — at the limits phase, a refusal of
 //!   every instance after the first ([`crate::check_limits`]): the sink states the `one_instance`
-//!   mark, so the host asks it while the configuration is resolved; READY with nothing otherwise.
+//!   mark, so the host asks it while the configuration is resolved; READY with nothing at the instances
+//!   phase, and a phase it does not know is REFUSED. Every kind op on no instance is REFUSED.
 //!
 //! No `unsafe` here: the snapshot and the buffer `scrape` is lent are read and written through the
 //! SDK's safe lend (`families()`, `samples()`, `labels()`, `buf()`).
@@ -32,20 +33,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use busbar_contract::abi::export::{
     cancel, CheckIn, CheckOut, DeliverIn, ExportStream, Route, ScrapeIn, ScrapeOut, ServeIn,
-    ServeOut, Tail, CHECK_PHASE_LIMITS, ROUTE_AUTH_KEY, SCRAPE_FLAG_HOOK_FAMILIES,
+    ServeOut, Tail, CHECK_PHASE_INSTANCES, CHECK_PHASE_LIMITS, ROUTE_AUTH_KEY,
+    SCRAPE_FLAG_HOOK_FAMILIES,
 };
 use busbar_contract::abi::host::service::{SNAPSHOT_SCOPE_HOOKS, SNAPSHOT_SCOPE_WHOLE};
 use busbar_contract::abi::mechanism::call::{AbiStr, OutHead, Outcome, BLOB_JSON, BLOB_OCTETS};
-use busbar_contract::abi::mechanism::door::{KindTailHead, Statement, MARK_ONE_INSTANCE};
+use busbar_contract::abi::mechanism::door::{KindTailHead, Rewrite, Statement, MARK_ONE_INSTANCE};
 use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
-use busbar_contract::abi::sdk::door::{abi_str, statement};
+use busbar_contract::abi::sdk::door::{abi_str, alias, statement};
 use busbar_contract::abi::sdk::export::{instance_names, tail, Quiet};
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
 use busbar_contract::abi::sdk::{
     Instance, Lent, MetricFamily, MetricSample, Out, Safe, SafeSlot, ServiceError, Services,
 };
 
-use crate::NAME;
+use crate::{ALIAS, NAME};
 
 /// The one stream the sink carries.
 const STREAMS: &[u8] = &[ExportStream::Metrics as u8];
@@ -73,9 +75,15 @@ const TAIL: Tail = tail(STREAMS, ROUTES);
 /// The most calls one instance holds in flight: the `max_inflight` its Statement declares.
 pub const MAX_INFLIGHT: u32 = 64;
 
-/// This plugin's Statement: its name and version, the `metrics` stream and its two routes.
+/// The module name an operator writes, as the alias the registry holds beside [`NAME`].
+pub(crate) const REWRITES: &[Rewrite] = &[alias(ALIAS)];
+
+/// This plugin's Statement: its name and version, the `metrics` stream, its two routes and its
+/// alias.
 pub const STATEMENT: Statement = Statement {
     kind_tail: (&TAIL as *const Tail).cast::<KindTailHead>(),
+    rewrites: REWRITES.as_ptr(),
+    rewrites_len: REWRITES.len(),
     // One scrape sink renders the ONE well-known `/metrics`: at most one instance.
     marks: MARK_ONE_INSTANCE,
     ..statement(NAME, env!("CARGO_PKG_VERSION"), MAX_INFLIGHT)
@@ -239,17 +247,22 @@ impl SafeSlot for Deliver {
     type Out = OutHead;
     type State = Held<Prometheus>;
     fn call(
-        _: Instance<'_, Held<Prometheus>>,
+        instance: Instance<'_, Held<Prometheus>>,
         _: Lent<'_, DeliverIn>,
-        _: Out<'_, OutHead>,
+        mut out: Out<'_, OutHead>,
     ) -> Outcome {
+        if instance.get().is_none() {
+            return out.fail(Refusal::refused(NO_INSTANCE));
+        }
         Outcome::Ready
     }
 }
 
 /// The error texts of `serve` and `check`'s FAILED and REFUSED answers: one per cause, so the
 /// host's warn names why instead of a bare outcome.
-const NO_INSTANCE: &str = "no opened prometheus instance";
+pub const NO_INSTANCE: &str = "no opened prometheus instance";
+/// `check` at a phase this sink does not know.
+pub const UNKNOWN_PHASE: &str = "not a check phase this sink knows (limits or instances)";
 const NOT_A_ROUTE: &str = "not a route this sink serves (only GET /metrics and /metrics/hooks)";
 const NO_SERVICES: &str =
     "the host offers this sink no services: the exposition cannot read the snapshot";
@@ -272,11 +285,14 @@ impl SafeSlot for Check {
         mut out: Out<'_, CheckOut>,
     ) -> Outcome {
         let Some(h) = instance.get() else {
-            out.error(NO_INSTANCE);
-            return Outcome::Refused;
+            return out.fail(Refusal::refused(NO_INSTANCE));
         };
-        if input.phase != CHECK_PHASE_LIMITS {
-            return Outcome::Ready;
+        match input.phase {
+            CHECK_PHASE_LIMITS => {}
+            // Nothing to say across the instances' settings: each is `validate`'s.
+            CHECK_PHASE_INSTANCES => return Outcome::Ready,
+            // A phase this sink does not know is refused, never run as another.
+            _ => return out.fail(Refusal::refused(UNKNOWN_PHASE)),
         }
         let lines = crate::check_limits(&instance_names(input));
         if !lines.is_empty() {
@@ -317,16 +333,12 @@ impl SafeSlot for Serve {
         mut out: Out<'_, ServeOut>,
     ) -> Outcome {
         let Some(h) = instance.get() else {
-            out.error(NO_INSTANCE);
-            return Outcome::Refused;
+            return out.fail(Refusal::refused(NO_INSTANCE));
         };
         let (scope, headers, render): Exposition = match input.field(|i| &i.path).as_str() {
             Ok(METRICS) => (SNAPSHOT_SCOPE_WHOLE, METRICS_HEADERS, crate::render),
             Ok(METRICS_HOOKS) => (SNAPSHOT_SCOPE_HOOKS, HOOKS_HEADERS, crate::render_hooks),
-            _ => {
-                out.error(NOT_A_ROUTE);
-                return Outcome::Refused;
-            }
+            _ => return out.fail(Refusal::refused(NOT_A_ROUTE)),
         };
         let Some(services) = h.host().and_then(|host| host.services()) else {
             out.error(NO_SERVICES);
