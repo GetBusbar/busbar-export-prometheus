@@ -2,46 +2,139 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! THE PROMETHEUS EXPORT SINK — `export.<name>.module: prometheus`.
-//!
-//! A PULL sink over the COLD export ABI. The host keeps what only the host can own: the recorder
-//! every emit site writes, its scrape-time gauges, and the well-known `/metrics` route it serves.
-//! This sink owns what an exposition IS: it carries the `metrics` stream (the instance subscribed
-//! to it is the one the host's scrape asks to render), it validates the settings an operator writes
-//! for it, and on every scrape the host hands it the recorder's snapshot (`ExportRequest::Scrape`,
-//! export ABI minor 6) and serves the text it renders back.
-//!
-//! One crate, two doors (DECISIONS #2 rule (1)): the `rlib` is linked into the shipped binary
-//! through the composition root's linked tables ([`linked::EXPORT`]), the `cdylib` can be packed
-//! into a signed tarball and dropped into `plugins/`. Both are registered by the one admission and
-//! loaded by the one load over [`BUSBAR_COLD_ENTRY`] or the library's symbols — the same functions.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
-use busbar_contract::abi::sdk::{
-    render_exposition, ExportHandler, ExportStream, MetricFamily, MetricSample, TEXT_EXPOSITION,
-};
+pub mod door;
 
-/// The row's canonical name.
+use busbar_contract::abi::sdk::export::second_instances;
+use busbar_contract::abi::sdk::life::settings_as;
+use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
+use std::fmt::Write as _;
+use zeroize::Zeroizing;
+
+/// Reserve the complete rendering before copying any private label. String growth must never
+/// release a prior unwiped allocation. All additions are checked before an output owner exists.
+fn render_buffer(families: &[MetricFamily], blank_line: bool) -> Zeroizing<String> {
+    let mut bytes = 0usize;
+    let mut add = |n: usize| {
+        bytes = bytes
+            .checked_add(n)
+            .expect("metric rendering size overflow")
+    };
+    for f in families {
+        add(9);
+        add(f.name.len());
+        add(f.kind.len());
+        if let Some(help) = &f.help {
+            add(9);
+            add(f.name.len());
+            add(help.len());
+        }
+        for s in &f.samples {
+            add(s.name.len());
+            add(2);
+            add(s.value.len());
+            if !s.labels.is_empty() {
+                add(2);
+                add(s.labels.len() - 1);
+                for (k, v) in &s.labels {
+                    add(k.len());
+                    add(v.len());
+                    add(3);
+                }
+            }
+        }
+        if blank_line {
+            add(1);
+        }
+    }
+    Zeroizing::new(String::with_capacity(bytes))
+}
+
+/// One family in the Prometheus TEXT exposition format: `# HELP` (when present), `# TYPE`, the
+/// `samples` as handed, and a blank line when `blank_line` (the host exposition closes each family
+/// with one; the hook exposition does not). Every label value and number is written as the snapshot
+/// carries it.
+fn write_family<'a>(
+    out: &mut String,
+    f: &MetricFamily,
+    samples: impl Iterator<Item = &'a MetricSample>,
+    blank_line: bool,
+) {
+    if let Some(help) = &f.help {
+        let _ = writeln!(out, "# HELP {} {help}", f.name);
+    }
+    let _ = writeln!(out, "# TYPE {} {}", f.name, f.kind);
+    for s in samples {
+        out.push_str(&s.name);
+        if !s.labels.is_empty() {
+            out.push('{');
+            for (i, (k, v)) in s.labels.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                let _ = write!(out, "{k}=\"{v}\"");
+            }
+            out.push('}');
+        }
+        let _ = writeln!(out, " {}", s.value);
+    }
+    if blank_line {
+        out.push('\n');
+    }
+}
+
+/// Render the host's HOOK families (`/metrics/hooks`, the export kind's `scrape` with
+/// `SCRAPE_FLAG_HOOK_FAMILIES`): families by name, `# HELP` when present then `# TYPE`, each
+/// family's samples in the order handed, and NO blank line between families. Every label value and
+/// number is written as the host spelled it.
+pub fn render_hooks(families: &[MetricFamily]) -> String {
+    let mut out = render_hooks_owned(families);
+    std::mem::take(&mut *out)
+}
+
+pub(crate) fn render_hooks_owned(families: &[MetricFamily]) -> Zeroizing<String> {
+    let mut ordered: Vec<&MetricFamily> = families.iter().collect();
+    ordered.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut out = render_buffer(families, false);
+    for f in ordered {
+        write_family(&mut out, f, f.samples.iter(), false);
+    }
+    out
+}
+
+/// The limits check across every configured instance, in configuration order: the sink states the
+/// `one_instance` mark, so each extra instance is refused, naming the first.
+pub fn check_limits(instances: &[String]) -> Vec<String> {
+    second_instances(
+        instances,
+        ALIAS,
+        "Prometheus serves the ONE well-known /metrics route, so a second instance could \
+         only be silently ignored — keep a single instance.",
+    )
+}
+
+/// The plugin's canonical name.
 pub const NAME: &str = "busbar-export-prometheus";
 
-/// The `module:` an operator writes — the name 1.5.5 spelled the built-in by — the row's alias on
-/// either door.
+/// The `module:` an operator writes, the alias on either door.
 pub const ALIAS: &str = "prometheus";
 
-/// What this sink DECLARES to the host (the manifest's `declares` section): nothing — it reports
-/// no series and raises no code of its own, and it has no destination.
-pub const DECLARES: &str = "{}";
+/// What this sink DECLARES to the host (the manifest's `declares` section, `declares.json`, which
+/// `busbar-plugin-pack --declares-file` signs into the tarball).
+pub const DECLARES: &str = include_str!("../declares.json");
 
-/// The `settings:` an operator writes for this sink — the same shape, field for field, the
-/// configuration grammar has frozen for it since 1.5.3, so a refusal reads exactly as it always has.
-/// The VALUES are the host's to act on (the recorder's retention window, the scrape-time gauge
-/// bound); this sink only says whether they are well formed.
+/// The `settings:` an operator writes for this sink, field for field the configuration grammar's
+/// shape. The VALUES are the host's to act on (retention window, scrape-time gauge bound); this
+/// sink only says whether they are well formed.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrometheusSettings {
     /// REQUIRED: the retention window of the rolling quantile summary, in seconds — positive.
     buffer_seconds: u64,
-    /// The bound on per-key scrape-time gauges.
+    /// The bound on per-key scrape-time gauges: validated, never read here (the host applies it,
+    /// 2000 when omitted).
     #[serde(default)]
     #[allow(dead_code)]
     key_gauge_limit: usize,
@@ -54,85 +147,84 @@ const ZERO_RETENTION: &str =
      the recording cost. Name a positive retention window in seconds, or remove the instance to \
      turn metrics off";
 
-/// The sink. It holds nothing: every scrape carries the whole snapshot it renders.
-struct Prometheus;
-
-impl ExportHandler for Prometheus {
-    /// `metrics` — the one stream the host PULLS rather than pushes.
-    fn streams(&self) -> Vec<ExportStream> {
-        vec![ExportStream::Metrics]
+/// The settings refusal, as one complete line: a malformed bag is `settings: <serde's words>`; a
+/// zero retention window is refused rather than served inert (omitting the instance is how
+/// collection is turned off).
+///
+/// # Errors
+/// The line, when the settings are refused.
+pub fn validate(settings: &[u8]) -> Result<(), String> {
+    let parsed: PrometheusSettings = settings_as(settings).map_err(|r| {
+        r.text()
+            .map_or_else(String::new, std::string::ToString::to_string)
+    })?;
+    if parsed.buffer_seconds == 0 {
+        return Err(ZERO_RETENTION.to_string());
     }
-
-    /// The settings refusal, as one complete line in the configuration's own words: a malformed
-    /// bag is `export.<instance>.settings: <why>`; a zero retention window asks the recorder to keep
-    /// nothing while still paying to record it, which is refused rather than served inert (omitting
-    /// the instance is how collection is turned off).
-    fn validate(&self, instance: &str, settings: &serde_json::Value) -> Vec<String> {
-        match serde_json::from_value::<PrometheusSettings>(settings.clone()) {
-            Err(e) => vec![format!("export.{instance}.settings: {e}")],
-            Ok(s) if s.buffer_seconds == 0 => vec![ZERO_RETENTION.to_string()],
-            Ok(_) => Vec::new(),
-        }
-    }
-
-    /// The Prometheus text exposition of the snapshot: `# HELP`, `# TYPE`, the samples and the
-    /// family-closing blank line, every label value and number exactly as the recorder wrote it —
-    /// in the STABLE order [`canonical_order`] gives it.
-    fn render(&self, families: &[MetricFamily]) -> (String, String) {
-        (
-            TEXT_EXPOSITION.to_string(),
-            render_exposition(&canonical_order(families)),
-        )
-    }
+    Ok(())
 }
 
-/// The snapshot in a STABLE order: families by name, and within a family its series by their
-/// labels. The recorder hands families and series over in its maps' hash order, which differs from
-/// boot to boot; the same metrics must scrape to the same bytes.
-///
-/// A SERIES is every sample sharing one label set once `le` / `quantile` are set aside — a
-/// histogram's `_bucket` lines with its `_sum` and `_count`, a summary's quantiles with its `_sum`
-/// and `_count`. A series is moved as a unit and its own lines keep the order the recorder wrote
-/// them in (buckets ascending, then `_sum`, then `_count`), so every output is one of the orders
-/// the recorder could already print.
-fn canonical_order(families: &[MetricFamily]) -> Vec<MetricFamily> {
-    let mut out = families.to_vec();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    for family in &mut out {
-        let mut series: std::collections::BTreeMap<Vec<(String, String)>, Vec<MetricSample>> =
-            std::collections::BTreeMap::new();
-        for sample in std::mem::take(&mut family.samples) {
-            let key = sample
-                .labels
-                .iter()
-                .filter(|(k, _)| k != "le" && k != "quantile")
-                .cloned()
-                .collect();
-            series.entry(key).or_default().push(sample);
-        }
-        family.samples = series.into_values().flatten().collect();
+/// The Prometheus text exposition of the snapshot: `# HELP`, `# TYPE`, the samples and the
+/// family-closing blank line, every label value and number exactly as the recorder wrote it, in a
+/// stable order: families by kind (counter, gauge, histogram and summary, then any other) and name,
+/// and each family's series by their labels.
+pub fn render(families: &[MetricFamily]) -> String {
+    let mut out = render_owned(families);
+    std::mem::take(&mut *out)
+}
+
+pub(crate) fn render_owned(families: &[MetricFamily]) -> Zeroizing<String> {
+    let mut out = render_buffer(families, true);
+    for f in canonical_order(families) {
+        write_family(&mut out, f, series_order(f), true);
     }
     out
 }
 
-/// Open the sink. The settings are the host's to act on and were validated while the host
-/// validated its configuration, so the open reads none of them and cannot fail on them.
-pub fn open(_cfg: &str) -> Result<Box<dyn ExportHandler>, String> {
-    Ok(Box::new(Prometheus))
+/// A family kind's place in the stable order: counters, then gauges, then distributions
+/// (histogram and summary), then anything else.
+fn kind_rank(kind: &str) -> u8 {
+    match kind {
+        "counter" => 0,
+        "gauge" => 1,
+        "histogram" | "summary" => 2,
+        _ => 3,
+    }
 }
 
-busbar_contract::abi::sdk::export_export_plugin!(open);
+/// The snapshot in a STABLE order: families grouped by KIND — every counter, then every gauge,
+/// then every histogram/summary (a distribution) — and by name within a kind's group.
+fn canonical_order(families: &[MetricFamily]) -> Vec<&MetricFamily> {
+    let mut out: Vec<&MetricFamily> = families.iter().collect();
+    out.sort_by(|a, b| {
+        kind_rank(&a.kind)
+            .cmp(&kind_rank(&b.kind))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    out
+}
 
-/// THE LINKED DOOR's entry — what the composition root's linked tables name for this crate.
-pub mod linked {
-    /// `(name, alias, declares, boundary)` — the row's statement and the boundary the one cold load
-    /// runs over, exactly what the dropped-in tarball states and exports.
-    pub const EXPORT: (&str, &str, &str, &busbar_contract::abi::sdk::ColdEntry) = (
-        super::NAME,
-        super::ALIAS,
-        super::DECLARES,
-        &super::BUSBAR_COLD_ENTRY,
-    );
+/// The family's samples in a STABLE order: its series by their labels.
+fn series_order(family: &MetricFamily) -> impl Iterator<Item = &MetricSample> {
+    let mut series: std::collections::BTreeMap<Vec<(&str, &str)>, Vec<&MetricSample>> =
+        std::collections::BTreeMap::new();
+    // Only the kind that owns a label sets it aside: other kinds (and a user's own `quantile` on a
+    // histogram, `le` on a summary) key on the full label set.
+    let aside = match family.kind.as_str() {
+        "histogram" => Some("le"),
+        "summary" => Some("quantile"),
+        _ => None,
+    };
+    for sample in &family.samples {
+        let key = sample
+            .labels
+            .iter()
+            .filter(|(k, _)| Some(k.as_str()) != aside)
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        series.entry(key).or_default().push(sample);
+    }
+    series.into_values().flatten()
 }
 
 #[cfg(test)]

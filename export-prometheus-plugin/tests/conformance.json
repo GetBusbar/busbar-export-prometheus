@@ -1,0 +1,29 @@
+{
+  "settings": { "buffer_seconds": 60 },
+  "export": {
+    "bad_settings": [
+      { "settings": {}, "refusal": "settings: missing field `buffer_seconds`" },
+      { "settings": { "buffer_seconds": 60, "rotate": 1 },
+        "refusal": "settings: unknown field `rotate`, expected `buffer_seconds` or `key_gauge_limit`" },
+      { "settings": { "buffer_seconds": 0 },
+        "refusal": "the `module: prometheus` export instance sets settings.buffer_seconds: 0, which retains no observations — every scrape would report empty quantiles while still paying the recording cost. Name a positive retention window in seconds, or remove the instance to turn metrics off" }
+    ],
+    "deliver": [
+      { "stream": "metrics", "batch": "{\"ts\":1}\n", "observed": [] }
+    ],
+    "scrape": [
+      { "families": [
+          { "name": "busbar_up", "kind": "gauge",
+            "samples": [ { "name": "busbar_up", "labels": [], "value": "1" } ] },
+          { "name": "busbar_requests_total", "help": "requests", "kind": "counter",
+            "samples": [ { "name": "busbar_requests_total", "labels": [["pool", "a"]], "value": "3" } ] }
+        ],
+        "cap": 64,
+        "exposition": "# HELP busbar_requests_total requests\n# TYPE busbar_requests_total counter\nbusbar_requests_total{pool=\"a\"} 3\n\n# TYPE busbar_up gauge\nbusbar_up 1\n\n" },
+      { "families": [], "cap": 64, "exposition": "" }
+    ],
+    "status": { "outcome": "Ready" },
+    "check": { "outcome": "Ready" },
+    "serve": [ { "method": "GET", "path": "/exports/metrics/x", "outcome": "Refused" } ]
+  }
+}

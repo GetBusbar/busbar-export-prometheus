@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 [package]
 name = "busbar-export-prometheus"
-version = "1.5.0"
-publish = false
-edition = "2021"
-rust-version = "1.97"
-description = "The prometheus export sink: renders the host recorder's snapshot as the Prometheus text exposition the host serves at the well-known /metrics. Linked into the shipped binary, or dropped in as a signed tarball — one registration, one contract."
-license = "Apache-2.0"
+version = "1.6.0"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The prometheus export sink: serves the host recorder's snapshot at /metrics and /metrics/hooks. Linked into the shipped binary, or dropped in as a signed tarball, with one registration and one contract."
+license.workspace = true
 
 [lib]
-# rlib: THE LOGIC. The busbar composition root links it (its `linked::EXPORT` row and
-# `BUSBAR_COLD_ENTRY`), and the sibling `busbar-export-prometheus-plugin` cdylib re-exports it as the
-# dropped-in door. One source, both doors (DECISIONS #2 rule (1)).
+# rlib only: the logic and its door. A build that LINKS this crate registers `door::door` as its row
+# (no symbol is exported from here); the dropped-in cdylib is `busbar-export-prometheus-plugin` (same
+# repo), which exports the same door as `busbar_plugin_door`.
 crate-type = ["rlib"]
 
 [dependencies]
@@ -19,8 +19,16 @@ crate-type = ["rlib"]
 # as `busbar_contract::abi::sdk`, so a plugin's busbar closure is exactly busbar-contract). Pinned by
 # git rev to the busbar commit in `.busbar-ref`; a busbar build that links this crate `[patch]`es the
 # busbar git source to its own tree, so ONE copy of the contract links.
-busbar-contract = { git = "https://github.com/GetBusbar/busbar", rev = "7a5b429041752e00375e120ab1547a8928c3dee4" }
+busbar-contract = { workspace = true }
 # The settings shape this sink validates (`buffer_seconds`, `key_gauge_limit`) is parsed with serde so
 # its refusals read exactly as the configuration's own settings errors always have.
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+# The contract's plugin test harness (fake host, door view, reply copies): dev-only, so no shipped image carries it.
+busbar-contract = { workspace = true, features = ["test-seal"] }
+
+[lints]
+workspace = true
