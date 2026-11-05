@@ -125,6 +125,9 @@ pub const ALIAS: &str = "prometheus";
 /// `busbar-plugin-pack --declares-file` signs into the tarball).
 pub const DECLARES: &str = include_str!("../declares.json");
 
+/// The operator settings schema published in the plugin's signed Statement.
+pub const SETTINGS_SCHEMA: &str = include_str!("../settings.schema.json");
+
 /// The `settings:` an operator writes for this sink, field for field the configuration grammar's
 /// shape. The VALUES are the host's to act on (retention window, scrape-time gauge bound); this
 /// sink only says whether they are well formed.

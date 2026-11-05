@@ -73,6 +73,12 @@ busbar_contract::statement_extensions!(EXTENSIONS: [
 /// This plugin's Statement: its name and version, the `metrics` stream, its two routes and its
 /// alias.
 pub const STATEMENT: Statement = Statement {
+    settings_schema: busbar_contract::abi::mechanism::call::Blob {
+        ptr: crate::SETTINGS_SCHEMA.as_ptr(),
+        len: crate::SETTINGS_SCHEMA.len(),
+        fmt: busbar_contract::abi::mechanism::call::BLOB_JSON,
+        flags: 0,
+    },
     kind_tail: (&TAIL as *const Tail).cast::<KindTailHead>(),
     rewrites: REWRITES.as_ptr(),
     rewrites_len: REWRITES.len(),

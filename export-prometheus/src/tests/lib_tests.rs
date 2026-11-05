@@ -497,6 +497,48 @@ fn the_statement_states_the_alias_rewrite() {
     assert!(crate::door::REWRITES[0].to.is_absent());
 }
 
+#[test]
+fn published_settings_schema_matches_the_operator_parser() {
+    let schema: serde_json::Value = serde_json::from_str(crate::SETTINGS_SCHEMA).unwrap();
+    let blob = crate::door::STATEMENT.settings_schema;
+    assert!(std::ptr::eq(blob.ptr, crate::SETTINGS_SCHEMA.as_ptr()));
+    assert_eq!(blob.len, crate::SETTINGS_SCHEMA.len());
+    assert_eq!(blob.fmt, busbar_contract::abi::mechanism::call::BLOB_JSON);
+    assert_eq!(blob.flags, 0);
+    assert_eq!(schema["required"], serde_json::json!(["buffer_seconds"]));
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(schema["properties"]["buffer_seconds"]["minimum"], 1);
+    assert_eq!(schema["properties"]["key_gauge_limit"]["default"], 2000);
+    for (value, accepted) in [
+        (serde_json::json!({"buffer_seconds": 1}), true),
+        (
+            serde_json::json!({"buffer_seconds": 60, "key_gauge_limit": 2000}),
+            true,
+        ),
+        (
+            serde_json::json!({"buffer_seconds": 60, "key_gauge_limit": 0}),
+            true,
+        ),
+        (serde_json::json!({}), false),
+        (serde_json::json!({"buffer_seconds": 0}), false),
+        (serde_json::json!({"buffer_seconds": "60"}), false),
+        (
+            serde_json::json!({"buffer_seconds": 60, "key_gauge_limit": -1}),
+            false,
+        ),
+        (
+            serde_json::json!({"buffer_seconds": 60, "unknown": 1}),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            crate::validate(&serde_json::to_vec(&value).unwrap()).is_ok(),
+            accepted,
+            "{value}"
+        );
+    }
+}
+
 /// `le` / `quantile` are set aside only for the family kind that owns them: a gauge's `le`-labelled
 /// series are distinct series, ordered by their labels whatever order the recorder handed them in.
 #[test]
