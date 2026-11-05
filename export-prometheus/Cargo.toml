@@ -27,6 +27,7 @@ serde_json = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+jsonschema = { workspace = true }
 # The contract's plugin test harness (fake host, door view, reply copies): dev-only, so no shipped image carries it.
 busbar-contract = { workspace = true, features = ["test-seal"] }
 

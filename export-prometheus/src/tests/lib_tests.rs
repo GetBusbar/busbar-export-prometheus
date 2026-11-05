@@ -5,6 +5,9 @@
 //! it renders a snapshot back into the exposition it was taken from. The linked-vs-dropped-in proof
 //! is `busbar-export-prometheus-plugin`'s conformance test.
 
+#[path = "../../../testing/settings/integer_token.rs"]
+mod settings_profile;
+
 use super::*;
 
 /// Renders the snapshot in its supplied order without sorting.
@@ -558,4 +561,69 @@ fn a_gauge_with_le_labelled_series_renders_identically_from_both_input_orders() 
     };
     let (ab, ba) = (render(&[fam(["a", "b"])]), render(&[fam(["b", "a"])]));
     assert_eq!(ab, ba, "gauge series collapsed to one key keep input order");
+}
+
+#[test]
+fn settings_schema_integer_tokens_match_native_parser() {
+    let schema: serde_json::Value = serde_json::from_str(crate::SETTINGS_SCHEMA).unwrap();
+    let profile = settings_profile::validator(&schema).unwrap();
+    let standard = jsonschema::validator_for(&schema).unwrap();
+    assert_eq!(schema["x-busbar-settings-profile"], "integer-token-v1");
+    for (pointer, template, integer, kind) in [
+        (
+            r#"/properties/buffer_seconds"#,
+            r#"{"buffer_seconds":TOKEN}"#,
+            "1",
+            "unsigned",
+        ),
+        (
+            r#"/properties/key_gauge_limit"#,
+            r#"{"buffer_seconds":60,"key_gauge_limit":TOKEN}"#,
+            "1",
+            "unsigned",
+        ),
+    ] {
+        assert_eq!(
+            schema.pointer(pointer).unwrap()["x-busbar-integer-token"],
+            kind
+        );
+        for (token, accepted) in [
+            (integer.to_string(), true),
+            (format!("{integer}.0"), false),
+            (format!("{integer}e0"), false),
+            (format!("{integer}E+0"), false),
+        ] {
+            let text = template.replace("TOKEN", &token);
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert!(
+                standard.is_valid(&value),
+                "standard mathematical integer: {text}"
+            );
+            assert_eq!(profile.is_valid(&value), accepted, "profile: {text}");
+            assert_eq!(
+                crate::validate(text.as_bytes()).is_ok(),
+                accepted,
+                "native: {text}"
+            );
+        }
+        // Do not infer signed negative-zero behavior from a regular expression:
+        // the profile must agree with the actual lifecycle parser.
+        for token in [
+            "null",
+            "0",
+            "-0",
+            "-0.0",
+            "0e0",
+            "-1",
+            "18446744073709551616",
+        ] {
+            let text = template.replace("TOKEN", token);
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(
+                profile.is_valid(&value),
+                crate::validate(text.as_bytes()).is_ok(),
+                "native sign/range: {text}"
+            );
+        }
+    }
 }

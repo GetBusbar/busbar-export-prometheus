@@ -2,14 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["buffer_seconds"],
+  "required": [
+    "buffer_seconds"
+  ],
   "properties": {
     "buffer_seconds": {
       "type": "integer",
       "minimum": 1,
       "maximum": 18446744073709551615,
       "description": "Retention window of the rolling quantile summary, in seconds.",
-      "x-busbar-public": true
+      "x-busbar-public": true,
+      "x-busbar-integer-token": "unsigned"
     },
     "key_gauge_limit": {
       "type": "integer",
@@ -17,7 +20,9 @@
       "maximum": 18446744073709551615,
       "default": 2000,
       "description": "Maximum per-key gauge series emitted by the host on each scrape.",
-      "x-busbar-public": true
+      "x-busbar-public": true,
+      "x-busbar-integer-token": "unsigned"
     }
-  }
+  },
+  "x-busbar-settings-profile": "integer-token-v1"
 }
