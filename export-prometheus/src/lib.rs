@@ -140,7 +140,7 @@ struct PrometheusSettings {
     /// 2000 when omitted).
     #[serde(default)]
     #[allow(dead_code)]
-    key_gauge_limit: usize,
+    key_gauge_limit: u64,
 }
 
 /// The zero-retention refusal, word for word as the configuration has always reported it.

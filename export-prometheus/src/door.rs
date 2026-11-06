@@ -101,12 +101,25 @@ const FIRST_READ: usize = 64 * 1024;
 /// buffer is allocated rather than after the read and the render.
 const MAX_LAYOUT: u64 = HARD_MAX_BYTES * std::mem::size_of::<ScrapeSample>() as u64;
 
-fn read_buffer(bytes: usize) -> Result<Zeroizing<Vec<u64>>, ServiceError> {
+/// Why a snapshot read failed: the host service's answer, or the sink's own read buffer.
+enum ReadError {
+    Service(ServiceError),
+    /// The read buffer could not be allocated.
+    NoMemory,
+}
+
+impl From<ServiceError> for ReadError {
+    fn from(e: ServiceError) -> Self {
+        Self::Service(e)
+    }
+}
+
+fn read_buffer(bytes: usize) -> Result<Zeroizing<Vec<u64>>, ReadError> {
     let words = bytes.div_ceil(std::mem::size_of::<u64>());
     let mut buffer = Vec::new();
     buffer
         .try_reserve_exact(words)
-        .map_err(|_| ServiceError::Broken)?;
+        .map_err(|_| ReadError::NoMemory)?;
     buffer.resize(words, 0);
     Ok(Zeroizing::new(buffer))
 }
@@ -148,7 +161,7 @@ impl Prometheus {
     /// read's size; a short buffer earns the one re-call, with headroom (a ticket-less re-call reads
     /// the snapshot again, which may have grown). `None` = not ready. A short answer past
     /// [`MAX_LAYOUT`] is returned as it came, never allocated for.
-    fn read(&self, services: &Services, scope: u32) -> Result<Option<Families>, ServiceError> {
+    fn read(&self, services: &Services, scope: u32) -> Result<Option<Families>, ReadError> {
         let none = CompletionHandle {
             ticket: Ticket::NONE,
             seq: 0,
@@ -169,7 +182,7 @@ impl Prometheus {
             let next = used.checked_add(used / 4).ok_or(ServiceError::Broken)?;
             hint.store(next.max(FIRST_READ), Ordering::Relaxed);
         }
-        read.map(|families| families.map(|(f, _used)| Families(f.into_iter().map(lift).collect())))
+        Ok(read?.map(|(f, _used)| Families(f.into_iter().map(lift).collect())))
     }
 }
 
@@ -330,8 +343,10 @@ impl SafeSlot for Deliver {
     }
 }
 
-/// The error texts of `deliver`, `scrape`, `serve` and `check`: one per cause, so the
-/// host's warn names why instead of a bare outcome.
+// The error texts of `deliver`, `scrape`, `serve` and `check`: one per cause, so the
+// host's warn names why instead of a bare outcome.
+
+/// A kind op called on a slot with no opened instance.
 pub const NO_INSTANCE: &str = "no opened prometheus instance";
 /// `check` at a phase this sink does not know.
 pub const UNKNOWN_PHASE: &str = "not a check phase this sink knows (limits or instances)";
@@ -344,6 +359,7 @@ const READ_REFUSED: &str = "the host refused the snapshot read";
 const READ_FAILED: &str = "the host failed the snapshot read";
 const READ_BROKEN: &str = "the host's snapshot broke the service's rules";
 const READ_SHORT: &str = "the snapshot outgrew the buffer on the one re-call";
+const READ_NO_MEMORY: &str = "the sink could not allocate the snapshot read buffer";
 const OVER_LIMIT: &str = "the rendered snapshot exceeds the export answer limit";
 const SCRAPE_UNNAMED: &str =
     "the host's scrape snapshot lacks a family name, sample name, label or sample value";
@@ -433,12 +449,15 @@ impl SafeSlot for Serve {
             Ok(None) => (503u16, NOT_READY_HEADERS, Zeroizing::new(String::new())),
             Err(e) => {
                 let cause = match e {
-                    ServiceError::Unserved => READ_UNSERVED,
-                    ServiceError::Declined(Outcome::Refused) => READ_REFUSED,
-                    ServiceError::Declined(_) => READ_FAILED,
-                    ServiceError::Broken => READ_BROKEN,
-                    ServiceError::Short { bytes, .. } if bytes > MAX_LAYOUT => OVER_LIMIT,
-                    ServiceError::Short { .. } => READ_SHORT,
+                    ReadError::NoMemory => READ_NO_MEMORY,
+                    ReadError::Service(ServiceError::Unserved) => READ_UNSERVED,
+                    ReadError::Service(ServiceError::Declined(Outcome::Refused)) => READ_REFUSED,
+                    ReadError::Service(ServiceError::Declined(_)) => READ_FAILED,
+                    ReadError::Service(ServiceError::Broken) => READ_BROKEN,
+                    ReadError::Service(ServiceError::Short { bytes, .. }) if bytes > MAX_LAYOUT => {
+                        OVER_LIMIT
+                    }
+                    ReadError::Service(ServiceError::Short { .. }) => READ_SHORT,
                 };
                 let scope = if scope == SNAPSHOT_SCOPE_HOOKS {
                     "HOOKS"

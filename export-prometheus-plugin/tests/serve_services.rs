@@ -329,7 +329,10 @@ fn an_unallocatable_retry_fails_with_words_and_does_not_poison_the_next_read() {
     );
     assert_eq!(answers.len(), 2);
     assert_eq!(answers[0].0, Outcome::Failed);
-    assert!(answers[0].1.contains("snapshot broke"), "{}", answers[0].1);
+    assert_eq!(
+        answers[0].1, "the sink could not allocate the snapshot read buffer (scope WHOLE)",
+        "the sink's own allocation failure is not blamed on the host"
+    );
     assert_eq!(
         answers[1],
         (Outcome::Ready, String::new()),

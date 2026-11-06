@@ -384,3 +384,49 @@ fn a_scrape_snapshot_missing_a_required_text_is_failed_with_words() {
     assert_eq!(outcome, Outcome::Ready, "{error}");
     assert_eq!(written, "# TYPE m counter\nm 1\n\n".len());
 }
+
+#[test]
+fn present_but_empty_texts_render_as_empty_not_as_absent() {
+    let empty = [ScrapeLabel {
+        key: abi(b"pool"),
+        value: abi(b""),
+    }];
+    let samples = [ScrapeSample {
+        name: abi(b"m"),
+        labels: empty.as_ptr(),
+        labels_len: 1,
+        value: abi(b"1"),
+    }];
+    let families = [ScrapeFamily {
+        help: abi(b""),
+        ..family(abi(b"m"), &samples)
+    }];
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut input: ScrapeIn = blank_in();
+    input.head = head::<ScrapeIn>(export::slot::SCRAPE);
+    input.families = families.as_ptr();
+    input.families_len = families.len();
+    input.buf = buf.as_mut_ptr();
+    input.cap = buf.len();
+    let mut output: ScrapeOut = blank_out();
+    output.head.size = size_of::<ScrapeOut>() as u32;
+    let (outcome, error) = with_instance(|table, instance| {
+        // SAFETY: the live instance; exact-sized initialized records; the families, their
+        // samples, labels and strings and the buffer all outlive the call.
+        let outcome = unsafe {
+            table.scrape.unwrap()(
+                instance,
+                (&input as *const ScrapeIn).cast(),
+                (&mut output as *mut ScrapeOut).cast(),
+            )
+        }
+        .outcome();
+        (outcome, error_of(output.head.error))
+    });
+    assert_eq!(outcome, Outcome::Ready, "{error}");
+    assert_eq!(
+        &buf[..output.written],
+        b"# HELP m \n# TYPE m counter\nm{pool=\"\"} 1\n\n",
+        "an empty label value and an empty HELP are text the host gave, not missing text"
+    );
+}
