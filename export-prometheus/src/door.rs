@@ -6,6 +6,7 @@
 //! `SafeSlot`.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 use zeroize::{Zeroize, Zeroizing};
 
 use busbar_contract::abi::export::{
@@ -18,7 +19,7 @@ use busbar_contract::abi::host::service::{SNAPSHOT_SCOPE_HOOKS, SNAPSHOT_SCOPE_W
 use busbar_contract::abi::mechanism::call::{AbiStr, OutHead, Outcome, BLOB_JSON, BLOB_OCTETS};
 use busbar_contract::abi::mechanism::check::HARD_MAX_BYTES;
 use busbar_contract::abi::mechanism::door::{KindTailHead, Rewrite, Statement, MARK_ONE_INSTANCE};
-use busbar_contract::abi::mechanism::ticket::{CompletionHandle, Ticket};
+use busbar_contract::abi::mechanism::ticket::CompletionHandle;
 use busbar_contract::abi::sdk::door::{abi_str, alias, statement};
 use busbar_contract::abi::sdk::export::{instance_names, tail, Quiet};
 use busbar_contract::abi::sdk::life::{Held, Life, Refreshed, Refusal};
@@ -158,31 +159,38 @@ fn hint_slot(scope: u32) -> usize {
 
 impl Prometheus {
     /// The host's families of `scope` through the host snapshot service, into a buffer of the last
-    /// read's size; a short buffer earns the one re-call, with headroom (a ticket-less re-call reads
-    /// the snapshot again, which may have grown). `None` = not ready. A short answer past
-    /// [`MAX_LAYOUT`] is returned as it came, never allocated for.
-    fn read(&self, services: &Services, scope: u32) -> Result<Option<Families>, ReadError> {
-        let none = CompletionHandle {
-            ticket: Ticket::NONE,
-            seq: 0,
-            _reserved: 0,
-        };
+    /// read's size; a short buffer earns one re-call with headroom on the same
+    /// ticketed snapshot. Pending reads retain their host request and are polled
+    /// on the same handle. `None` = not ready. Oversized layouts are refused.
+    fn read(
+        &self,
+        services: &Services,
+        handle: CompletionHandle,
+        scope: u32,
+    ) -> Poll<Result<Option<Families>, ReadError>> {
         let hint = &self.read_hints[hint_slot(scope)];
         let mut buf = read_buffer(hint.load(Ordering::Relaxed))?;
-        let read = match services.snapshot_read_with_used(none, scope, &mut buf) {
-            Err(ServiceError::Short { bytes, .. }) if bytes <= MAX_LAYOUT => {
+        let read = match services.snapshot_read_with_used(handle, scope, &mut buf) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(ServiceError::Short { bytes, .. })) if bytes <= MAX_LAYOUT => {
                 let want = usize::try_from(bytes).map_err(|_| ServiceError::Broken)?;
                 let want = want.checked_add(want / 4).ok_or(ServiceError::Broken)?;
                 buf = read_buffer(want)?;
-                services.snapshot_read_with_used(none, scope, &mut buf)
+                let Poll::Ready(read) = services.snapshot_read_with_used(handle, scope, &mut buf)
+                else {
+                    return Poll::Pending;
+                };
+                read
             }
-            other => other,
+            Poll::Ready(other) => other,
         };
         if let Ok(Some((_, used))) = &read {
             let next = used.checked_add(used / 4).ok_or(ServiceError::Broken)?;
             hint.store(next.max(FIRST_READ), Ordering::Relaxed);
         }
-        Ok(read?.map(|(f, _used)| Families(f.into_iter().map(lift).collect())))
+        Poll::Ready(Ok(
+            read?.map(|(f, _used)| Families(f.into_iter().map(lift).collect()))
+        ))
     }
 }
 
@@ -444,7 +452,15 @@ impl SafeSlot for Serve {
             out.error(NO_SERVICES);
             return Outcome::Failed;
         };
-        let (status, headers, body) = match h.life().read(&services, scope) {
+        let handle = CompletionHandle {
+            ticket: instance.ticket(),
+            seq: 0,
+            ..CompletionHandle::ZERO
+        };
+        let Poll::Ready(read) = h.life().read(&services, handle, scope) else {
+            return Outcome::Pending;
+        };
+        let (status, headers, body) = match read {
             Ok(Some(families)) => (200u16, headers, render(&families.0)),
             Ok(None) => (503u16, NOT_READY_HEADERS, Zeroizing::new(String::new())),
             Err(e) => {
