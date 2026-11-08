@@ -66,15 +66,18 @@ mod inbound;
 
 /// The row a busbar build that links the sink states.
 fn row() -> LinkedRow {
-    LinkedRow::of(busbar_export_prometheus::door::door).expect("the linked door renders")
+    LinkedRow::of(busbar_export_prometheus::door).expect("the linked door renders")
 }
 
 fn dispatcher() -> Arc<Dispatcher> {
-    Arc::new(Dispatcher::new(DispatchConfig {
-        workers: 2,
-        watchdog_period: Duration::from_millis(20),
-        ..DispatchConfig::default()
-    }))
+    Arc::new(Dispatcher::new(
+        DispatchConfig {
+            workers: 2,
+            watchdog_period: Duration::from_millis(20),
+            ..DispatchConfig::default()
+        },
+        busbar_contract::services::test_caller_binding(),
+    ))
 }
 
 fn bind(d: &Dispatcher) -> Bind {
@@ -547,13 +550,12 @@ fn a_manifest_stating_the_1_5_5_export_abi_is_refused() {
 fn lifecycle_and_configured_examples_cross_both_real_doors() {
     use busbar_contract::abi::export::{CheckInstance, CHECK_PHASE_INSTANCES, CHECK_PHASE_LIMITS};
     use busbar_contract::abi::mechanism::lifecycle::{RefreshIn, ReleaseIn, TickIn, TickOut};
-    use std::sync::atomic::Ordering;
 
     let cases: Value = serde_json::from_str(include_str!("conformance.json")).expect("test cases");
     for dropped in [false, true] {
         let d = dispatcher();
         let p = load(&d, dropped);
-        let count = || p.inner.crossings.load(Ordering::SeqCst);
+        let count = || p.test_invocations().0;
         let initial = count();
         assert_eq!(p.name(), "busbar-export-prometheus");
         assert_eq!(p.kind(), busbar_contract::abi::mechanism::KindCode::Export);
@@ -830,30 +832,27 @@ fn the_real_scrape_instance_preserves_policy_refresh_recall_and_drop() {
         assert!(hooks.len() > 64 * 1024);
         let mut families = parse_families(&format!("{big}\n{small}\n")).expect("snapshot");
         families.reverse();
-        let before = sink.plugin().inner.crossings.load(Ordering::SeqCst);
+        let before = sink.plugin().test_invocations().0;
         assert_eq!(sink.scrape_hooks(&families).unwrap(), hooks.as_bytes());
         assert_eq!(
-            sink.plugin().inner.crossings.load(Ordering::SeqCst) - before,
+            sink.plugin().test_invocations().0 - before,
             2,
             "one exact short-buffer recall"
         );
-        let before = sink.plugin().inner.crossings.load(Ordering::SeqCst);
+        let before = sink.plugin().test_invocations().0;
         let plain = sink.scrape(&families).unwrap();
-        assert_eq!(
-            sink.plugin().inner.crossings.load(Ordering::SeqCst) - before,
-            2
-        );
+        assert_eq!(sink.plugin().test_invocations().0 - before, 2);
         assert_eq!(
             String::from_utf8(plain).unwrap(),
             format!("{big}\n{small}\n")
         );
         assert_eq!(sink.scrape(&[]).unwrap(), b"");
         assert!(sink.plugin().is_open());
-        let instance = Arc::clone(&sink.plugin().inner);
-        let before_close = instance.crossings.load(Ordering::SeqCst);
+        let counts = sink.plugin().test_invocation_probe();
+        let before_close = counts().0;
         drop(sink);
         assert_eq!(
-            instance.crossings.load(Ordering::SeqCst) - before_close,
+            counts().0 - before_close,
             1,
             "dropping the actual sink crosses its CLOSE exactly once"
         );

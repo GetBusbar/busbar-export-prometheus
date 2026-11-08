@@ -5,7 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-pub mod door;
+pub(crate) mod door;
 
 use busbar_contract::abi::sdk::export::second_instances;
 use busbar_contract::abi::sdk::life::settings_as;
@@ -89,7 +89,8 @@ fn write_family<'a>(
 /// `SCRAPE_FLAG_HOOK_FAMILIES`): families by name, `# HELP` when present then `# TYPE`, each
 /// family's samples in the order handed, and NO blank line between families. Every label value and
 /// number is written as the host spelled it.
-pub fn render_hooks(families: &[MetricFamily]) -> String {
+#[cfg(test)]
+pub(crate) fn render_hooks(families: &[MetricFamily]) -> String {
     let mut out = render_hooks_owned(families);
     std::mem::take(&mut *out)
 }
@@ -106,7 +107,7 @@ pub(crate) fn render_hooks_owned(families: &[MetricFamily]) -> Zeroizing<String>
 
 /// The limits check across every configured instance, in configuration order: the sink states the
 /// `one_instance` mark, so each extra instance is refused, naming the first.
-pub fn check_limits(instances: &[String]) -> Vec<String> {
+pub(crate) fn check_limits(instances: &[String]) -> Vec<String> {
     second_instances(
         instances,
         ALIAS,
@@ -126,7 +127,7 @@ pub const ALIAS: &str = "prometheus";
 pub const DECLARES: &str = include_str!("../declares.json");
 
 /// The operator settings schema published in the plugin's signed Statement.
-pub const SETTINGS_SCHEMA: &str = include_str!("../settings.schema.json");
+pub(crate) const SETTINGS_SCHEMA: &str = include_str!("../settings.schema.json");
 
 /// The `settings:` an operator writes for this sink, field for field the configuration grammar's
 /// shape. The VALUES are the host's to act on (retention window, scrape-time gauge bound); this
@@ -156,7 +157,7 @@ const ZERO_RETENTION: &str =
 ///
 /// # Errors
 /// The line, when the settings are refused.
-pub fn validate(settings: &[u8]) -> Result<(), String> {
+pub(crate) fn validate(settings: &[u8]) -> Result<(), String> {
     let parsed: PrometheusSettings = settings_as(settings).map_err(|r| {
         r.text()
             .map_or_else(String::new, std::string::ToString::to_string)
@@ -171,7 +172,8 @@ pub fn validate(settings: &[u8]) -> Result<(), String> {
 /// family-closing blank line, every label value and number exactly as the recorder wrote it, in a
 /// stable order: families by kind (counter, gauge, histogram and summary, then any other) and name,
 /// and each family's series by their labels.
-pub fn render(families: &[MetricFamily]) -> String {
+#[cfg(test)]
+pub(crate) fn render(families: &[MetricFamily]) -> String {
     let mut out = render_owned(families);
     std::mem::take(&mut *out)
 }
@@ -233,3 +235,9 @@ fn series_order(family: &MetricFamily) -> impl Iterator<Item = &MetricSample> {
 #[cfg(test)]
 #[path = "tests/lib_tests.rs"]
 mod tests;
+
+/// The validated entry and generated registration descriptor.
+pub use door::{door, MACRO_DOOR};
+
+#[cfg(test)]
+mod kernel_formatter_contract;

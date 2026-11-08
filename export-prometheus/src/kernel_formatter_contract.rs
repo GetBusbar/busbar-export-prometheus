@@ -4,8 +4,8 @@
 //! Formatter predicates over the exact Family data asserted by the kernel's conversion tests.
 //! Filtering, escaping and conversion remain kernel data oracles; these tests call the real sink.
 
+use crate::{render, render_hooks};
 use busbar_contract::abi::sdk::{MetricFamily, MetricSample};
-use busbar_export_prometheus::{render, render_hooks};
 
 fn sample(name: &str, labels: &[(&str, &str)], value: &str) -> MetricSample {
     MetricSample {

@@ -34,8 +34,9 @@ busbar-export-prometheus-plugin = { path = ".", features = ["dropped-in"] }
 # The conformance test loads the built cdylib and the linked door over the REAL loader and drives
 # both through the one dispatcher — dev-only, never in the shipped artifact. Same pinned rev as the
 # logic crate's busbar-contract, so one busbar source resolves.
-busbar-plugin-loader = { workspace = true }
+busbar-plugin-loader = { workspace = true , features = ["test-support"] }
 serde_json = { workspace = true }
 
+busbar-contract = { workspace = true, features = ["test-seal"] }
 [lints]
 workspace = true

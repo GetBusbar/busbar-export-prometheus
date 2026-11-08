@@ -7,12 +7,12 @@
 
 #![deny(unsafe_code)]
 
-pub use busbar_export_prometheus::*;
+pub use busbar_export_prometheus::{door, ALIAS, DECLARES, MACRO_DOOR, NAME};
 
 /// The exported door, behind `dropped-in` (the cdylib build only): the macro's `#[unsafe(no_mangle)]` symbol is
 /// the one exemption.
 #[cfg(feature = "dropped-in")]
 #[allow(unsafe_code)]
 mod exported {
-    busbar_contract::export_door!(busbar_export_prometheus::door::door);
+    busbar_contract::export_door!(busbar_export_prometheus::door);
 }

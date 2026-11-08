@@ -92,7 +92,7 @@ fn slots(snapshot_read: Option<busbar_contract::abi::host::service::ServiceFn>) 
 
 /// The door's `open`, `serve` and `close`, read off its op table.
 fn ops() -> (Op, Op, Op) {
-    let door: &'static Door = busbar_export_prometheus::door::door();
+    let door: &'static Door = busbar_export_prometheus::door();
     // SAFETY: the linked door is `'static` plugin data; its ops table is the export kind's `Ops`.
     let table = unsafe {
         let parts = Door::read_parts(std::ptr::from_ref(door));

@@ -15,7 +15,6 @@ use busbar_contract::abi::host::service::{HostSlots, ServiceOut, SnapshotReadIn,
 use busbar_contract::abi::mechanism::call::{
     AbiStr, Blob, InHead, OutHead, Outcome, RawOutcome, BLOB_JSON,
 };
-use busbar_contract::abi::mechanism::door::Door;
 use busbar_contract::abi::mechanism::lifecycle::{slot, OpenIn, OpenOut, ReleaseIn};
 use busbar_contract::abi::mechanism::ticket::{HostCtx, HostTables};
 use busbar_contract::abi::sdk::door::{blank_in, blank_out};
@@ -168,11 +167,7 @@ extern "C" fn snapshot(_: HostCtx, raw: *const c_void, answer: *mut ServiceOut) 
 
 fn ops() -> &'static Ops {
     // SAFETY: the linked door and export table are static program data.
-    unsafe {
-        &*Door::read_parts(busbar_export_prometheus::door::door())
-            .ops
-            .cast::<Ops>()
-    }
+    unsafe { &*busbar_export_prometheus::door().parts().ops.cast::<Ops>() }
 }
 fn head<T>(op: u32) -> InHead {
     let mut h: InHead = blank_in();

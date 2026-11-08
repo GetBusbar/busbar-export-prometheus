@@ -21,8 +21,11 @@ mod inbound;
 #[test]
 fn check_refuses_a_phase_it_does_not_know_through_each_real_door() {
     for dropped in [false, true] {
-        let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
-        let row = LinkedRow::of(busbar_export_prometheus::door::door).expect("rendered door");
+        let d = Arc::new(Dispatcher::new(
+            DispatchConfig::default(),
+            busbar_contract::services::test_caller_binding(),
+        ));
+        let row = LinkedRow::of(busbar_export_prometheus::door).expect("rendered door");
         let bind = Bind {
             instance: Arc::from("metrics"),
             max_inflight_cap: 64,
@@ -68,7 +71,7 @@ fn check_refuses_a_phase_it_does_not_know_through_each_real_door() {
                 assert_eq!(called.outcome, Outcome::Refused);
                 assert_eq!(
                     called.error.as_deref(),
-                    Some(busbar_export_prometheus::door::UNKNOWN_PHASE.as_bytes())
+                    Some("not a check phase this sink knows (limits or instances)".as_bytes())
                 );
             } else {
                 assert_eq!(called.outcome, Outcome::Ready);

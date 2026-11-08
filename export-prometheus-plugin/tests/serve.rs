@@ -65,27 +65,30 @@ fn families(text: &str) -> Vec<Family> {
 }
 
 impl HostServices for Host {
-    fn snapshot_read(&self, _: &Caller, scope: u32) -> Snapshot {
-        self.scopes.lock().unwrap().push(scope);
-        let read = self.reads.fetch_add(1, Ordering::SeqCst);
-        if let Some(step) = *self.growing.lock().unwrap() {
-            return Snapshot::Families(families(&big_exposition(step * (read + 1))));
-        }
-        if *self.declined.lock().unwrap() {
-            return Snapshot::Refused("not granted");
-        }
-        if !*self.ready.lock().unwrap() {
-            return Snapshot::NotReady;
-        }
-        if scope != 0 && *self.no_hooks.lock().unwrap() {
-            return Snapshot::Families(Vec::new());
-        }
-        if scope == 0 {
-            if let Some(text) = self.whole.lock().unwrap().as_deref() {
-                return Snapshot::Families(families(text));
+    fn snapshot_read(&self, _: &Caller, scope: u32, _later: Later) -> Ran {
+        let snapshot = (|| {
+            self.scopes.lock().unwrap().push(scope);
+            let read = self.reads.fetch_add(1, Ordering::SeqCst);
+            if let Some(step) = *self.growing.lock().unwrap() {
+                return Snapshot::Families(families(&big_exposition(step * (read + 1))));
             }
-        }
-        Snapshot::Families(families(if scope == 0 { OWN } else { HOOKS }))
+            if *self.declined.lock().unwrap() {
+                return Snapshot::Refused("not granted");
+            }
+            if !*self.ready.lock().unwrap() {
+                return Snapshot::NotReady;
+            }
+            if scope != 0 && *self.no_hooks.lock().unwrap() {
+                return Snapshot::Families(Vec::new());
+            }
+            if scope == 0 {
+                if let Some(text) = self.whole.lock().unwrap().as_deref() {
+                    return Snapshot::Families(families(text));
+                }
+            }
+            Snapshot::Families(families(if scope == 0 { OWN } else { HOOKS }))
+        })();
+        Ran::Now(snapshot.stored())
     }
     fn now(&self) -> Reading {
         Reading {
@@ -114,17 +117,19 @@ impl HostServices for Host {
     fn trust_unreached(&self, _: &Caller, _: &str) -> Stored {
         Stored::refused("unimplemented")
     }
-    fn trust_sight_item(&self, _: &Caller, _: &str, _: &str, _: &str) -> Stored {
-        Stored::refused("unimplemented")
+    fn trust_sight_item(&self, _: &Caller, _: &str, _: &str, _: &str, _later: Later) -> Ran {
+        Ran::Now(Stored::refused("unimplemented"))
     }
     fn trust_decide(
         &self,
         _: &Caller,
+        _ticket: busbar_contract::abi::mechanism::ticket::Ticket,
         _: busbar_contract::services::TrustKeyRef<'_>,
         _: Option<&str>,
         _: bool,
-    ) -> Stored {
-        Stored::refused("unimplemented")
+        _later: Later,
+    ) -> Ran {
+        Ran::Now(Stored::refused("unimplemented"))
     }
     fn trust_state(&self, _: &Caller, _: &str) -> Stored {
         Stored::refused("unimplemented")
@@ -135,8 +140,8 @@ impl HostServices for Host {
     fn session_emit(&self, _: &Caller, _: u64, _: &[u8]) -> Stored {
         Stored::refused("unimplemented")
     }
-    fn ticket_mint(&self, _: &Caller, _: Option<u64>, _: u64, _: &[u8]) -> Stored {
-        Stored::refused("unimplemented")
+    fn ticket_mint(&self, _: &Caller, _: Option<u64>, _: u64, _: &[u8], _later: Later) -> Ran {
+        Ran::Now(Stored::refused("unimplemented"))
     }
     fn ticket_take(&self, _: &Caller, _: Option<u64>) -> Stored {
         Stored::refused("unimplemented")
@@ -211,7 +216,7 @@ fn the_listener_need_names_the_existing_data_binding() {
 }
 
 fn row() -> LinkedRow {
-    LinkedRow::of(busbar_export_prometheus::door::door).expect("the linked door renders")
+    LinkedRow::of(busbar_export_prometheus::door).expect("the linked door renders")
 }
 
 fn loaded(host: Arc<Host>, dropped: bool) -> (Arc<Dispatcher>, Plugin<Export>) {
@@ -223,7 +228,11 @@ fn loaded_with_config(
     dropped: bool,
     config: DispatchConfig,
 ) -> (Arc<Dispatcher>, Plugin<Export>) {
-    let d = Arc::new(Dispatcher::with_services(config, host));
+    let d = Arc::new(Dispatcher::with_services(
+        config,
+        host,
+        busbar_contract::services::test_caller_binding(),
+    ));
     let bind = Bind {
         instance: Arc::from("export.metrics"),
         max_inflight_cap: 64,

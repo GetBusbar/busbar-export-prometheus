@@ -164,7 +164,7 @@ impl Prometheus {
     /// on the same handle. `None` = not ready. Oversized layouts are refused.
     fn read(
         &self,
-        services: &Services,
+        services: &Services<busbar_contract::plugin::markers::ExportKind>,
         handle: CompletionHandle,
         scope: u32,
     ) -> Poll<Result<Option<Families>, ReadError>> {
@@ -219,6 +219,7 @@ fn lift(mut f: busbar_contract::export_calls::Family) -> MetricFamily {
 }
 
 impl Life for Prometheus {
+    type Kind = busbar_contract::plugin::markers::ExportKind;
     const CANCEL: u32 = cancel::ABORTED;
 
     fn validate(settings: &[u8]) -> Result<(), Refusal> {
@@ -301,11 +302,12 @@ fn families(input: Lent<'_, ScrapeIn>) -> Option<Families> {
 pub struct Scrape;
 
 impl SafeSlot for Scrape {
+    type Kind = busbar_contract::plugin::markers::ExportKind;
     type In = ScrapeIn;
     type Out = ScrapeOut;
     type State = Held<Prometheus>;
     fn call(
-        _: Instance<'_, Held<Prometheus>>,
+        _: Instance<'_, Held<Prometheus>, busbar_contract::plugin::markers::ExportKind>,
         input: Lent<'_, ScrapeIn>,
         mut out: Out<'_, ScrapeOut>,
     ) -> Outcome {
@@ -336,11 +338,12 @@ impl SafeSlot for Scrape {
 pub struct Deliver;
 
 impl SafeSlot for Deliver {
+    type Kind = busbar_contract::plugin::markers::ExportKind;
     type In = DeliverIn;
     type Out = OutHead;
     type State = Held<Prometheus>;
     fn call(
-        instance: Instance<'_, Held<Prometheus>>,
+        instance: Instance<'_, Held<Prometheus>, busbar_contract::plugin::markers::ExportKind>,
         _: Lent<'_, DeliverIn>,
         mut out: Out<'_, OutHead>,
     ) -> Outcome {
@@ -376,11 +379,12 @@ const SCRAPE_UNNAMED: &str =
 pub struct Check;
 
 impl SafeSlot for Check {
+    type Kind = busbar_contract::plugin::markers::ExportKind;
     type In = CheckIn;
     type Out = CheckOut;
     type State = Held<Prometheus>;
     fn call(
-        instance: Instance<'_, Held<Prometheus>>,
+        instance: Instance<'_, Held<Prometheus>, busbar_contract::plugin::markers::ExportKind>,
         input: Lent<'_, CheckIn>,
         mut out: Out<'_, CheckOut>,
     ) -> Outcome {
@@ -428,11 +432,12 @@ type Exposition = (
 pub struct Serve;
 
 impl SafeSlot for Serve {
+    type Kind = busbar_contract::plugin::markers::ExportKind;
     type In = ServeIn;
     type Out = ServeOut;
     type State = Held<Prometheus>;
     fn call(
-        instance: Instance<'_, Held<Prometheus>>,
+        instance: Instance<'_, Held<Prometheus>, busbar_contract::plugin::markers::ExportKind>,
         input: Lent<'_, ServeIn>,
         mut out: Out<'_, ServeOut>,
     ) -> Outcome {

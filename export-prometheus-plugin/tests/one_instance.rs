@@ -36,7 +36,7 @@ use artifact::cdylib;
 mod inbound;
 
 fn row() -> LinkedRow {
-    LinkedRow::of(busbar_export_prometheus::door::door).expect("the linked door renders")
+    LinkedRow::of(busbar_export_prometheus::door).expect("the linked door renders")
 }
 
 /// The door, linked or dropped in, opened on its settings.
@@ -110,7 +110,10 @@ fn check(p: &Plugin<Export>, phase: u32, names: &[&str]) -> Vec<String> {
 
 #[test]
 fn a_second_instance_is_refused_in_1_5_5_words_through_both_doors() {
-    let d = Arc::new(Dispatcher::new(DispatchConfig::default()));
+    let d = Arc::new(Dispatcher::new(
+        DispatchConfig::default(),
+        busbar_contract::services::test_caller_binding(),
+    ));
     for dropped in [false, true] {
         let p = opened(&d, dropped);
         let facts = p.context::<ExportFacts>().expect("export facts");
