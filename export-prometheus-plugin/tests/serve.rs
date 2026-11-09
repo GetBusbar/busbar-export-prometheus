@@ -56,7 +56,7 @@ struct Host {
     reads: AtomicUsize,
     scopes: Mutex<Vec<u32>>,
     /// When set, the whole snapshot is `step` samples per read so far (the first read `step`, the second `2 * step`, ...)
-    /// (a recorder that outgrows any buffer sized from the read before).
+    /// (a recorder that grows between requests; each ticket must retain its first snapshot).
     growing: Mutex<Option<usize>>,
 }
 
@@ -339,12 +339,12 @@ fn copy(ptr: *const u8, len: usize) -> String {
 }
 
 /// `GET path` through `serve`: the outcome, status, headers and body.
-fn get(p: &Plugin<Export>, path: &str) -> Value {
-    serve(p, path).0
+fn get(d: &Dispatcher, p: &Plugin<Export>, path: &str) -> Value {
+    serve(d, p, path).0
 }
 
 /// `GET path` through `serve`: the transcript, and the error text the answer named, if any.
-fn serve(p: &Plugin<Export>, path: &str) -> (Value, Option<String>) {
+fn serve(d: &Dispatcher, p: &Plugin<Export>, path: &str) -> (Value, Option<String>) {
     let mut input: ServeIn = blank_in();
     input.head = in_head();
     input.method = AbiStr {
@@ -358,7 +358,9 @@ fn serve(p: &Plugin<Export>, path: &str) -> (Value, Option<String>) {
     let mut out: ServeOut = blank_out();
     out.head = out_head();
     let mut f = Frame::new(input, out);
-    let called = p.call(export::slot::SERVE, &mut f);
+    // Match the real HTTP adapter: snapshot reads are ticketed host operations.
+    let ticket = d.inline_ticket().expect("a ticket for the scrape request");
+    let called = p.call_inline(ticket.ticket(), false, export::slot::SERVE, &mut f);
     let headers: Vec<String> = if called.outcome != Outcome::Ready || f.out.headers_out.is_null() {
         Vec::new()
     } else {
@@ -390,7 +392,7 @@ fn serve(p: &Plugin<Export>, path: &str) -> (Value, Option<String>) {
 /// One door's script.
 fn transcript(dropped: bool) -> Value {
     let host = Arc::new(Host::default());
-    let (_d, p) = opened(host.clone(), dropped);
+    let (d, p) = opened(host.clone(), dropped);
     let routes: Vec<String> = p
         .context::<ExportFacts>()
         .expect("export facts")
@@ -401,16 +403,16 @@ fn transcript(dropped: bool) -> Value {
     let policy = p.context::<ExportFacts>().expect("export facts");
     let public_routes = policy.public_routes.clone();
     let persistent_routes = policy.persistent_routes.clone();
-    let not_ready = get(&p, "/metrics");
-    let hooks_not_ready = get(&p, "/metrics/hooks");
+    let not_ready = get(&d, &p, "/metrics");
+    let hooks_not_ready = get(&d, &p, "/metrics/hooks");
     *host.ready.lock().unwrap() = true;
-    let metrics = get(&p, "/metrics");
-    let hooks = get(&p, "/metrics/hooks");
+    let metrics = get(&d, &p, "/metrics");
+    let hooks = get(&d, &p, "/metrics/hooks");
     *host.no_hooks.lock().unwrap() = true;
-    let hooks_empty = get(&p, "/metrics/hooks");
-    let elsewhere = serve(&p, "/exports/metrics/x");
+    let hooks_empty = get(&d, &p, "/metrics/hooks");
+    let elsewhere = serve(&d, &p, "/exports/metrics/x");
     *host.declined.lock().unwrap() = true;
-    let declined = serve(&p, "/metrics");
+    let declined = serve(&d, &p, "/metrics");
     let snapshot_scopes = host.scopes.lock().unwrap().clone();
     json!({
         "routes": routes,
@@ -513,7 +515,8 @@ fn big_exposition(n: usize) -> String {
 
 /// A snapshot larger than the 64 KiB first read buffer: the host answers `Short` with its size,
 /// the door re-calls once with headroom and serves the whole body; the second read starts from the
-/// stored hint. RED when the `Short` arm is gone: a real recorder snapshot over 64 KiB made
+/// stored hint. Each request reads the provider once and retries the frozen snapshot layout.
+/// RED when the `Short` arm is gone: a real recorder snapshot over 64 KiB made
 /// `GET /metrics` FAILED (the host answers `502`).
 #[test]
 fn a_snapshot_larger_than_the_first_read_buffer_is_served_whole_through_both_doors() {
@@ -523,12 +526,12 @@ fn a_snapshot_larger_than_the_first_read_buffer_is_served_whole_through_both_doo
         let host = Arc::new(Host::default());
         *host.ready.lock().unwrap() = true;
         *host.whole.lock().unwrap() = Some(big.clone());
-        let (_d, p) = opened(host.clone(), dropped);
+        let (d, p) = opened(host.clone(), dropped);
         let mut calls = Vec::new();
         for read in ["first", "second, from the stored hint"] {
             let before = host.reads.load(Ordering::SeqCst);
             assert_eq!(
-                get(&p, "/metrics"),
+                get(&d, &p, "/metrics"),
                 json!({"outcome": "Ready", "status": 200,
                        "headers": ["content-type", "text/plain; version=0.0.4"], "body": big}),
                 "dropped={dropped}, {read} read"
@@ -536,28 +539,31 @@ fn a_snapshot_larger_than_the_first_read_buffer_is_served_whole_through_both_doo
             calls.push(host.reads.load(Ordering::SeqCst) - before);
         }
 
-        assert_eq!(calls, [2, 1], "dropped={dropped}: snapshot reads per GET");
+        assert_eq!(calls, [1, 1], "dropped={dropped}: provider reads per GET");
     }
 }
 
-/// A snapshot that outgrows the buffer even on the one re-call: the host answers `Short` twice, and
-/// the door FAILS the serve naming the cause (the host answers `502`), reading exactly twice.
+/// A changing recorder cannot replace the snapshot during a short-buffer retry. Each new
+/// request gets the next snapshot, and both doors serve every byte of that request's snapshot.
 #[test]
-fn a_snapshot_that_outgrows_the_one_re_call_is_failed_through_both_doors() {
+fn a_growing_recorder_keeps_one_snapshot_per_request_through_both_doors() {
     for dropped in [false, true] {
         let host = Arc::new(Host::default());
         *host.ready.lock().unwrap() = true;
-
         *host.growing.lock().unwrap() = Some(1500);
-        let (_d, p) = opened(host.clone(), dropped);
-        let (answer, error) = serve(&p, "/metrics");
-        assert_eq!(answer["outcome"], "Failed", "dropped={dropped}");
-        assert_eq!(
-            error.as_deref(),
-            Some("the snapshot outgrew the buffer on the one re-call (scope WHOLE)"),
-            "dropped={dropped}"
-        );
-        assert_eq!(host.reads.load(Ordering::SeqCst), 2, "one re-call, no more");
+        let (d, p) = opened(host.clone(), dropped);
+        for request in 1..=2 {
+            let (answer, error) = serve(&d, &p, "/metrics");
+            assert_eq!(
+                answer,
+                json!({"outcome": "Ready", "status": 200,
+                       "headers": ["content-type", "text/plain; version=0.0.4"],
+                       "body": big_exposition(1500 * request)}),
+                "dropped={dropped}, request={request}"
+            );
+            assert!(error.is_none(), "{error:?}");
+            assert_eq!(host.reads.load(Ordering::SeqCst), request);
+        }
     }
 }
 
@@ -566,16 +572,16 @@ fn route_prefixes_do_not_admit_near_misses_through_either_door() {
     for dropped in [false, true] {
         let host = Arc::new(Host::default());
         *host.ready.lock().unwrap() = true;
-        let (_d, p) = opened(host.clone(), dropped);
+        let (d, p) = opened(host.clone(), dropped);
         for path in ["/metrics/", "/metricsx", "/metrics/hooks/x"] {
             assert_eq!(
-                serve(&p, path).0["outcome"],
+                serve(&d, &p, path).0["outcome"],
                 "Refused",
                 "{path}, dropped={dropped}"
             );
         }
         assert_eq!(host.reads.load(Ordering::SeqCst), 0);
-        assert_eq!(get(&p, "/metrics")["status"], 200);
+        assert_eq!(get(&d, &p, "/metrics")["status"], 200);
     }
 }
 
@@ -584,9 +590,9 @@ fn refused_snapshot_reads_name_the_scope_through_either_door() {
     for dropped in [false, true] {
         let host = Arc::new(Host::default());
         *host.declined.lock().unwrap() = true;
-        let (_d, p) = opened(host, dropped);
+        let (d, p) = opened(host, dropped);
         for (path, scope) in [("/metrics", "WHOLE"), ("/metrics/hooks", "HOOKS")] {
-            let (answer, error) = serve(&p, path);
+            let (answer, error) = serve(&d, &p, path);
             assert_eq!(answer["outcome"], "Failed");
             assert_eq!(
                 error,
@@ -626,10 +632,10 @@ fn an_exposition_above_the_existing_answer_limit_fails_without_exposing_its_labe
                 },
                 ..DispatchConfig::default()
             };
-            let (_d, p) = opened_with_config(host, dropped, config);
-            let (answer, error) = serve(&p, "/metrics");
+            let (d, p) = opened_with_config(host, dropped, config);
+            let (answer, error) = serve(&d, &p, "/metrics");
             assert_eq!(
-                _d.stats().quarantined,
+                d.stats().quarantined,
                 0,
                 "the byte-limit crossing completes"
             );
@@ -638,7 +644,7 @@ fn an_exposition_above_the_existing_answer_limit_fails_without_exposing_its_labe
                     answer["outcome"],
                     "Ready",
                     "size={size}, dropped={dropped}, dispatcher={:?}",
-                    _d.stats()
+                    d.stats()
                 );
                 assert_eq!(answer["status"], 200);
                 assert!(
