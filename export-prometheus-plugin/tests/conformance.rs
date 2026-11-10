@@ -5,6 +5,10 @@
 //! conformance on the export kind's memory ABI (THE DESIGN §11.4), run against the busbar rev this
 //! repo pins (`.busbar-ref`).
 
+#[path = "../../export-prometheus/src/snapshot_reader.rs"]
+mod snapshot_reader;
+use snapshot_reader::parse_families;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -70,14 +74,19 @@ fn row() -> LinkedRow {
 }
 
 fn dispatcher() -> Arc<Dispatcher> {
-    Arc::new(Dispatcher::new(
+    let dispatcher = Dispatcher::new(
         DispatchConfig {
             workers: 2,
             watchdog_period: Duration::from_millis(20),
             ..DispatchConfig::default()
         },
         busbar_contract::services::test_caller_binding(),
-    ))
+    );
+    assert!(
+        dispatcher.lend_seal(busbar_contract::plugin::TestKernelSeal),
+        "the host fixture lends its settings authority once"
+    );
+    Arc::new(dispatcher)
 }
 
 fn bind(d: &Dispatcher) -> Bind {
@@ -321,12 +330,11 @@ fn transcript(dropped: bool) -> Value {
 }
 
 /// The recorder snapshot of `exposition`, as the host's snapshot reader takes it
-/// (`busbar_contract::export_calls::parse_families`), in the SDK's family shape: each family's
+/// (`snapshot_reader::parse_families`), in the SDK's family shape: each family's
 /// `# TYPE` word, its HELP and its samples exactly as read. Contract types only: the plugin talks to
 /// busbar over the ABI and names no loader internals (Part 2 #2).
 fn to_contract(exposition: &str) -> Vec<MetricFamily> {
-    let families = busbar_contract::export_calls::parse_families(exposition)
-        .expect("the exposition snapshots");
+    let families = snapshot_reader::parse_families(exposition).expect("the exposition snapshots");
     families
         .iter()
         .map(|f| MetricFamily {
@@ -769,12 +777,18 @@ fn lifecycle_and_configured_examples_cross_both_real_doors() {
 
 #[test]
 fn the_real_scrape_instance_preserves_policy_refresh_recall_and_drop() {
-    use busbar_contract::export_calls::{parse_families, ExportCalls, ServeRequest};
+    use busbar_contract::export_calls::{ExportCalls, ServeRequest};
     use busbar_plugin_loader::dispatch::kinds::export::ExportFacts;
     use busbar_plugin_loader::export_door::ExportInstance;
 
     for dropped in [false, true] {
         let d = dispatcher();
+        let refused = ExportInstance::open(load(&d, dropped), Arc::clone(&d), br#"{"bogus":1}"#)
+            .expect_err("invalid product settings never open");
+        assert!(
+            refused.starts_with("settings: unknown field `bogus`"),
+            "{refused}"
+        );
         let p = load(&d, dropped);
         let facts = p
             .context::<ExportFacts>()
@@ -793,16 +807,28 @@ fn the_real_scrape_instance_preserves_policy_refresh_recall_and_drop() {
         let sink = ExportInstance::open(p, d, SETTINGS.as_bytes()).expect("the actual sink opens");
         assert_eq!(sink.public_routes(), ["/metrics", "/metrics/hooks"]);
         assert_eq!(sink.persistent_routes(), ["/metrics/hooks"]);
+        assert!(
+            busbar_plugin_loader::export_door::check(sink.plugin(), 1, &[])
+                .expect("instance check answers")
+                .is_empty()
+        );
         for settings in [
             json!({"bogus": 1}),
             json!({"buffer_seconds": 0}),
             json!({"buffer_seconds": "thirty"}),
         ] {
-            assert!(sink.refresh(&settings, 2).is_err(), "{settings}");
+            let settings = busbar_contract::plugin_settings::ResolvedSettings::from(settings);
+            assert!(sink.refresh(&settings, 2).is_err());
             assert!(sink.plugin().is_open());
         }
-        sink.refresh(&json!({"buffer_seconds": 30}), 3)
-            .expect("valid refresh");
+        let original_requirements = sink.recorder_requirements();
+        let refused = sink
+            .refresh(&json!({"buffer_seconds": 30}).into(), 3)
+            .expect_err("changing host retention needs a restart");
+        assert!(refused.contains("restart required"), "{refused}");
+        assert_eq!(sink.recorder_requirements(), original_requirements);
+        sink.refresh(&json!({"buffer_seconds": 60}).into(), 4)
+            .expect("unchanged recorder requirements permit refresh");
         let text = "# TYPE private_counter counter\nprivate_counter{pool=\"private\"} 1\n\n";
         assert_eq!(
             sink.scrape(&parse_families(text).unwrap()).unwrap(),

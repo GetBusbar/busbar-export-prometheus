@@ -131,7 +131,7 @@ fn it_renders_the_snapshot_back_into_the_exposition() {
             help: Some("requests served".to_string()),
             samples: vec![sample(
                 "busbar_requests_total",
-                &[("pool", "a\\\"b"), ("outcome", "ok")],
+                &[("pool", "a\"b"), ("outcome", "ok")],
                 "3",
             )],
         },
@@ -407,7 +407,7 @@ fn hook_families_render_in_the_1_5_5_hook_layout() {
         MetricFamily {
             name: "zeta_total".to_string(),
             kind: "counter".to_string(),
-            help: Some("tokens \\\\ saved".to_string()),
+            help: Some("tokens \\ saved".to_string()),
             samples: vec![
                 sample("zeta_total", "b", None, "2"),
                 sample("zeta_total", "a", None, "1"),
@@ -626,4 +626,32 @@ fn settings_schema_integer_tokens_match_native_parser() {
             );
         }
     }
+}
+
+#[test]
+fn recorder_declaration_maps_only_this_plugins_settings() {
+    let default = super::recorder_requirements(br#"{"buffer_seconds":60}"#).unwrap();
+    assert_eq!(default.retention_seconds, 60);
+    assert_eq!(default.key_gauge_limit, 2000);
+    let explicit =
+        super::recorder_requirements(br#"{"buffer_seconds":7,"key_gauge_limit":0}"#).unwrap();
+    assert_eq!(explicit.retention_seconds, 7);
+    assert_eq!(explicit.key_gauge_limit, 0);
+    assert!(super::recorder_requirements(br#"{"retention_seconds":60}"#).is_err());
+    assert!(super::recorder_requirements(br#"{"buffer_seconds":0}"#).is_err());
+}
+
+#[test]
+fn recorder_requirements_are_immutable_after_open() {
+    use busbar_contract::abi::sdk::life::Life;
+    let instance = crate::door::Prometheus::open(br#"{"buffer_seconds":60}"#, &[], 1).unwrap();
+    assert!(instance
+        .refresh(br#"{"buffer_seconds":60,"key_gauge_limit":2000}"#, &[], 2)
+        .is_ok());
+    assert!(instance
+        .refresh(br#"{"buffer_seconds":61}"#, &[], 2)
+        .is_err());
+    assert!(instance
+        .refresh(br#"{"buffer_seconds":60,"key_gauge_limit":5}"#, &[], 2)
+        .is_err());
 }

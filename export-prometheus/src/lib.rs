@@ -6,6 +6,15 @@
 #![forbid(unsafe_code)]
 
 pub(crate) mod door;
+mod encoding;
+#[cfg(test)]
+mod encoding_tests;
+#[cfg(test)]
+mod recording_tests;
+#[cfg(test)]
+mod snapshot_reader;
+#[cfg(test)]
+mod snapshot_reader_tests;
 
 use busbar_contract::abi::sdk::export::second_instances;
 use busbar_contract::abi::sdk::life::settings_as;
@@ -96,6 +105,8 @@ pub(crate) fn render_hooks(families: &[MetricFamily]) -> String {
 }
 
 pub(crate) fn render_hooks_owned(families: &[MetricFamily]) -> Zeroizing<String> {
+    let encoded = encoding::encode(families, false);
+    let families = &encoded.0;
     let mut ordered: Vec<&MetricFamily> = families.iter().collect();
     ordered.sort_by(|a, b| a.name.cmp(&b.name));
     let mut out = render_buffer(families, false);
@@ -130,18 +141,19 @@ pub const DECLARES: &str = include_str!("../declares.json");
 pub(crate) const SETTINGS_SCHEMA: &str = include_str!("../settings.schema.json");
 
 /// The `settings:` an operator writes for this sink, field for field the configuration grammar's
-/// shape. The VALUES are the host's to act on (retention window, scrape-time gauge bound); this
-/// sink only says whether they are well formed.
+/// shape. This plugin maps them to neutral host recorder requirements at validated OPEN.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrometheusSettings {
     /// REQUIRED: the retention window of the rolling quantile summary, in seconds — positive.
     buffer_seconds: u64,
-    /// The bound on per-key scrape-time gauges: validated, never read here (the host applies it,
-    /// 2000 when omitted).
-    #[serde(default)]
-    #[allow(dead_code)]
-    key_gauge_limit: u64,
+    /// The per-key scrape-time projection bound, 2000 when omitted.
+    #[serde(default = "default_key_gauge_limit")]
+    key_gauge_limit: usize,
+}
+
+fn default_key_gauge_limit() -> usize {
+    2000
 }
 
 /// The zero-retention refusal, word for word as the configuration has always reported it.
@@ -158,6 +170,12 @@ const ZERO_RETENTION: &str =
 /// # Errors
 /// The line, when the settings are refused.
 pub(crate) fn validate(settings: &[u8]) -> Result<(), String> {
+    recorder_requirements(settings).map(|_| ())
+}
+
+pub(crate) fn recorder_requirements(
+    settings: &[u8],
+) -> Result<busbar_contract::export_calls::RecorderRequirements, String> {
     let parsed: PrometheusSettings = settings_as(settings).map_err(|r| {
         r.text()
             .map_or_else(String::new, std::string::ToString::to_string)
@@ -165,7 +183,10 @@ pub(crate) fn validate(settings: &[u8]) -> Result<(), String> {
     if parsed.buffer_seconds == 0 {
         return Err(ZERO_RETENTION.to_string());
     }
-    Ok(())
+    Ok(busbar_contract::export_calls::RecorderRequirements {
+        retention_seconds: parsed.buffer_seconds,
+        key_gauge_limit: parsed.key_gauge_limit,
+    })
 }
 
 /// The Prometheus text exposition of the snapshot: `# HELP`, `# TYPE`, the samples and the
@@ -179,9 +200,32 @@ pub(crate) fn render(families: &[MetricFamily]) -> String {
 }
 
 pub(crate) fn render_owned(families: &[MetricFamily]) -> Zeroizing<String> {
+    let encoded = encoding::encode(families, true);
+    let families = &encoded.0;
     let mut out = render_buffer(families, true);
-    for f in canonical_order(families) {
-        write_family(&mut out, f, series_order(f), true);
+    let ordered = canonical_order(families);
+    let mut start = 0;
+    while start < ordered.len() {
+        let first = ordered[start];
+        let mut end = start + 1;
+        while end < ordered.len()
+            && ordered[end].name == first.name
+            && ordered[end].kind == first.kind
+        {
+            end += 1;
+        }
+        // Normalization can give distinct raw names the same wire name. Keep
+        // every sample and emit the family header once, as the recorder did
+        // before normalization moved into this exporter.
+        let group = &ordered[start..end];
+        let header = group
+            .iter()
+            .copied()
+            .find(|f| f.help.is_some())
+            .unwrap_or(first);
+        let samples = group.iter().flat_map(|family| &family.samples);
+        write_family(&mut out, header, ordered_series(&first.kind, samples), true);
+        start = end;
     }
     out
 }
@@ -205,22 +249,26 @@ fn canonical_order(families: &[MetricFamily]) -> Vec<&MetricFamily> {
         kind_rank(&a.kind)
             .cmp(&kind_rank(&b.kind))
             .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.kind.cmp(&b.kind))
     });
     out
 }
 
-/// The family's samples in a STABLE order: its series by their labels.
-fn series_order(family: &MetricFamily) -> impl Iterator<Item = &MetricSample> {
+/// Samples from one wire family in stable series order, preserving duplicates.
+fn ordered_series<'a>(
+    kind: &str,
+    samples: impl Iterator<Item = &'a MetricSample>,
+) -> impl Iterator<Item = &'a MetricSample> {
     let mut series: std::collections::BTreeMap<Vec<(&str, &str)>, Vec<&MetricSample>> =
         std::collections::BTreeMap::new();
     // Only the kind that owns a label sets it aside: other kinds (and a user's own `quantile` on a
     // histogram, `le` on a summary) key on the full label set.
-    let aside = match family.kind.as_str() {
+    let aside = match kind {
         "histogram" => Some("le"),
         "summary" => Some("quantile"),
         _ => None,
     };
-    for sample in &family.samples {
+    for sample in samples {
         let key = sample
             .labels
             .iter()

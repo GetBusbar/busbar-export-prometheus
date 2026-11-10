@@ -181,11 +181,7 @@ fn label_values_are_escaped() {
         "x_total",
         "counter",
         None,
-        vec![sample(
-            "x_total",
-            &[("hook", "h"), ("k", r#"a\"b\\c"#)],
-            "1",
-        )],
+        vec![sample("x_total", &[("hook", "h"), ("k", r#"a"b\c"#)], "1")],
     )];
     let text = render_hooks(&input);
     assert!(text.contains(r#"k="a\"b\\c""#), "{text}");

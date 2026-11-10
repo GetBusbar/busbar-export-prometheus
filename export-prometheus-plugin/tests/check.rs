@@ -71,7 +71,10 @@ fn check_refuses_a_phase_it_does_not_know_through_each_real_door() {
                 assert_eq!(called.outcome, Outcome::Refused);
                 assert_eq!(
                     called.error.as_deref(),
-                    Some("not a check phase this sink knows (limits or instances)".as_bytes())
+                    Some(
+                        "not a check phase this sink knows (limits, instances or recorder)"
+                            .as_bytes()
+                    )
                 );
             } else {
                 assert_eq!(called.outcome, Outcome::Ready);

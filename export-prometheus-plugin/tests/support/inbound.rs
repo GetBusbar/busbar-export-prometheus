@@ -69,7 +69,13 @@ impl DeclaredConns for Inbound {
     }
 }
 
-pub fn host(_: busbar_contract::conn::ConnWake, anchors: Option<&str>) -> Arc<dyn DeclaredConns> {
+pub fn host(
+    _: busbar_contract::conn::ConnWake,
+    anchors: Option<&str>,
+) -> busbar_contract::conn::admissions::AdmissionAuthority {
     assert!(anchors.is_none());
-    Arc::new(Inbound)
+    busbar_contract::conn::admissions::AdmissionAuthority::issue(
+        &busbar_contract::caps::KernelSeal::acquire_for_kernel(),
+        Arc::new(Inbound),
+    )
 }

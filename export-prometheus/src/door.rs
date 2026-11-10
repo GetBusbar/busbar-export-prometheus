@@ -67,6 +67,7 @@ pub const MAX_INFLIGHT: u32 = 64;
 pub(crate) const REWRITES: &[Rewrite] = &[alias(ALIAS)];
 
 busbar_contract::statement_extensions!(EXTENSIONS: [
+    (busbar_contract::export_calls::EXT_RECORDER_REQUIREMENTS, b"1"),
     (busbar_contract::abi::mechanism::extensions::EXT_PUBLIC_ROUTES, br#"["/metrics","/metrics/hooks"]"#),
     (busbar_contract::abi::mechanism::extensions::EXT_PERSISTENT_ROUTES, br#"["/metrics/hooks"]"#),
 ]);
@@ -148,6 +149,7 @@ impl Drop for Families {
 /// successful snapshot size.
 #[derive(Debug)]
 pub struct Prometheus {
+    recorder: busbar_contract::export_calls::RecorderRequirements,
     /// Indexed by [`hint_slot`]: WHOLE and HOOKS differ greatly in size, so neither sizes the other.
     read_hints: [AtomicUsize; 2],
 }
@@ -229,15 +231,21 @@ impl Life for Prometheus {
     /// Refuses settings `validate` refuses, in its words: an instance never opens on settings the
     /// configuration would refuse.
     fn open(settings: &[u8], _: &[&[u8]], _: u64) -> Result<Self, Refusal> {
-        crate::validate(settings).map_err(Refusal::failed)?;
+        let recorder = crate::recorder_requirements(settings).map_err(Refusal::failed)?;
         Ok(Self {
+            recorder,
             read_hints: [AtomicUsize::new(FIRST_READ), AtomicUsize::new(FIRST_READ)],
         })
     }
 
     /// Refuses settings `validate` refuses, in its words; the instance stays as it was.
     fn refresh(&self, settings: &[u8], _: &[&[u8]], _: u64) -> Result<Refreshed, Refusal> {
-        crate::validate(settings).map_err(Refusal::failed)?;
+        let recorder = crate::recorder_requirements(settings).map_err(Refusal::failed)?;
+        if recorder != self.recorder {
+            return Err(Refusal::refused(
+                "host recorder requirements are fixed at startup; restart required",
+            ));
+        }
         Ok(Refreshed::default())
     }
 }
@@ -360,7 +368,7 @@ impl SafeSlot for Deliver {
 /// A kind op called on a slot with no opened instance.
 pub const NO_INSTANCE: &str = "no opened prometheus instance";
 /// `check` at a phase this sink does not know.
-pub const UNKNOWN_PHASE: &str = "not a check phase this sink knows (limits or instances)";
+pub const UNKNOWN_PHASE: &str = "not a check phase this sink knows (limits, instances or recorder)";
 const NOT_A_ROUTE: &str = "not a route this sink serves (only GET /metrics and /metrics/hooks)";
 const NO_SERVICES: &str =
     "the host offers this sink no services: the exposition cannot read the snapshot";
@@ -392,6 +400,13 @@ impl SafeSlot for Check {
             return out.fail(Refusal::refused(NO_INSTANCE));
         };
         match input.phase {
+            busbar_contract::abi::export::CHECK_PHASE_RECORDER => {
+                return busbar_contract::abi::sdk::export::declare_recorder(
+                    h,
+                    out,
+                    h.life().recorder,
+                );
+            }
             CHECK_PHASE_LIMITS => {}
 
             CHECK_PHASE_INSTANCES => return Outcome::Ready,

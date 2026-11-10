@@ -36,6 +36,7 @@ busbar-export-prometheus-plugin = { path = ".", features = ["dropped-in"] }
 # logic crate's busbar-contract, so one busbar source resolves.
 busbar-plugin-loader = { workspace = true , features = ["test-support"] }
 serde_json = { workspace = true }
+zeroize = { workspace = true }
 
 busbar-contract = { workspace = true, features = ["test-seal"] }
 [lints]

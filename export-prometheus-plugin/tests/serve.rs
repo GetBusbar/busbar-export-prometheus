@@ -6,6 +6,10 @@
 //! answers them from the host snapshot service (`snapshot.read`) in 1.5.5's bytes, LINKED and
 //! DROPPED IN.
 
+#[path = "../../export-prometheus/src/snapshot_reader.rs"]
+mod snapshot_reader;
+use snapshot_reader::parse_families;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -15,7 +19,7 @@ use busbar_contract::abi::host::service::{SNAPSHOT_SCOPE_HOOKS, SNAPSHOT_SCOPE_W
 use busbar_contract::abi::mechanism::call::{AbiStr, Blob, Outcome};
 use busbar_contract::abi::mechanism::lifecycle::{slot as lc, OpenIn, OpenOut};
 use busbar_contract::abi::sdk::door::{blank_in, blank_out};
-use busbar_contract::export_calls::{parse_families, ExportCalls, Family, ServeRequest};
+use busbar_contract::export_calls::{ExportCalls, Family, ServeRequest};
 use busbar_contract::services::HostServices;
 use busbar_contract::services::{
     Caller, DiskDest, HookAsk, Later, NestAsk, Ran, Reading, RecordsList, Snapshot, Stored,
