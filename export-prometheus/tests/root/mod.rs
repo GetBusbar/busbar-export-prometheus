@@ -145,3 +145,6 @@ pub(crate) fn metrics_routes() -> std::sync::Arc<busbar_kernel::plugin_routes::P
 }
 
 mod metrics_cross_plane;
+
+#[path = "plugin_routes_actual.rs"]
+mod plugin_routes_actual;
