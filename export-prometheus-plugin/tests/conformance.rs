@@ -375,7 +375,7 @@ fn the_linked_and_the_dropped_in_prometheus_sink_are_one_sink() {
              retains no observations — every scrape would report empty quantiles while still \
              paying the recording cost. Name a positive retention window in seconds, or remove \
              the instance to turn metrics off",
-            "Failed settings: invalid type: string \"sixty\", expected u64",
+            "Failed settings: invalid type: string \"***\", expected u64",
         ])
     );
     assert_eq!(linked["open"], "Ready ");
