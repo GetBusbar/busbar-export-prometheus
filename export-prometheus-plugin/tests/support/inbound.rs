@@ -77,5 +77,6 @@ pub fn host(
     busbar_contract::conn::admissions::AdmissionAuthority::issue(
         &busbar_contract::caps::KernelSeal::acquire_for_kernel(),
         Arc::new(Inbound),
+        busbar_contract::secret_ref::Sugars::default(),
     )
 }
