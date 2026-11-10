@@ -294,3 +294,7 @@ mod kernel_formatter_contract;
 include!(concat!(env!("OUT_DIR"), "/root_test_source.rs"));
 
 include!(concat!(env!("OUT_DIR"), "/common_test_source.rs"));
+
+#[cfg(test)]
+#[path = "loader_ownership_tests.rs"]
+mod loader_ownership_tests;
