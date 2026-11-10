@@ -203,8 +203,10 @@ fn kind_word(kind: u8) -> String {
         .to_string()
 }
 
-/// One host family, as the renderer reads it.
+/// One host family, as the renderer reads it. The `unit` field the exposition omits is wiped
+/// before `f` drops, so it never reaches the allocator uncleared.
 fn lift(mut f: busbar_contract::export_calls::Family) -> MetricFamily {
+    f.unit.zeroize();
     MetricFamily {
         kind: kind_word(f.kind),
         name: std::mem::take(&mut f.name),
