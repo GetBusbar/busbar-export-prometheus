@@ -293,9 +293,6 @@ pub use door::{door, MACRO_DOOR};
 mod kernel_formatter_contract;
 
 // Source-only composition fixtures are expanded only by the root test harness.
-include!(concat!(env!("OUT_DIR"), "/root_test_source.rs"));
-
-include!(concat!(env!("OUT_DIR"), "/common_test_source.rs"));
 
 #[cfg(test)]
 #[path = "loader_ownership_tests.rs"]
