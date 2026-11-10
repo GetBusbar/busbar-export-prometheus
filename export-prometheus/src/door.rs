@@ -187,7 +187,7 @@ impl Prometheus {
             Poll::Ready(other) => other,
         };
         if let Ok(Some((_, used))) = &read {
-            let next = used.checked_add(used / 4).ok_or(ServiceError::Broken)?;
+            let next = used.saturating_add(used / 4);
             hint.store(next.max(FIRST_READ), Ordering::Relaxed);
         }
         Poll::Ready(Ok(

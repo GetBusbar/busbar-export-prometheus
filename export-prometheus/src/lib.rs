@@ -178,7 +178,9 @@ pub(crate) fn recorder_requirements(
 ) -> Result<busbar_contract::export_calls::RecorderRequirements, String> {
     let parsed: PrometheusSettings = settings_as(settings).map_err(|r| {
         r.text()
-            .map_or_else(String::new, std::string::ToString::to_string)
+            .map(std::string::ToString::to_string)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "settings did not parse".to_string())
     })?;
     if parsed.buffer_seconds == 0 {
         return Err(ZERO_RETENTION.to_string());

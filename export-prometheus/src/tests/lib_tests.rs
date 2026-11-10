@@ -94,7 +94,7 @@ fn its_settings_refusals_are_the_configurations_words() {
     );
     assert_eq!(
         check(serde_json::json!({ "buffer_seconds": "60" })),
-        vec!["settings: invalid type: string \"60\", expected u64".to_string()]
+        vec!["settings: invalid type: string \"***\", expected u64".to_string()]
     );
 }
 
