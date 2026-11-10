@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
 // Wire fixture interpretation stays with the exporter that owns its format.
 #[path = "../../src/snapshot_reader.rs"]
-mod snapshot_reader;
-pub use snapshot_reader::parse_families;
+pub mod snapshot_reader;
